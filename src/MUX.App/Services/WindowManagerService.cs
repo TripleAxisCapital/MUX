@@ -12,7 +12,10 @@ public sealed class WindowManagerService : IDisposable
     private const uint EventSystemForeground = 0x0003;
     private const uint EventSystemMoveSizeStart = 0x000A;
     private const uint EventSystemMoveSizeEnd = 0x000B;
+    private const uint EventObjectDestroy = 0x8001;
+    private const uint EventObjectStateChange = 0x800A;
     private const uint EventObjectLocationChange = 0x800B;
+    private const uint EventObjectStart = 0x8000;
     private const uint WineventOutOfContext = 0x0000;
     private const int ObjidWindow = 0;
     private const int SwRestore = 9;
@@ -20,10 +23,14 @@ public sealed class WindowManagerService : IDisposable
     private const int VkShift = 0x10;
     private const int GwlExStyle = -20;
     private const long WsExToolWindow = 0x00000080L;
+    private const int NativeMaximizeCorrectionDelayMs = 140;
+    private const int RectTolerancePx = 2;
 
     private readonly WinEventDelegate _eventDelegate;
     private readonly List<IntPtr> _hooks = new();
     private readonly ConcurrentDictionary<IntPtr, PixelRect> _pseudoMaximized = new();
+    private readonly ConcurrentDictionary<IntPtr, PixelRect> _lastNormalRects = new();
+    private readonly ConcurrentDictionary<IntPtr, Guid> _windowZones = new();
     private readonly ConcurrentDictionary<IntPtr, byte> _suppressed = new();
     private readonly Dispatcher _dispatcher;
     private readonly ZoneOutlineService _outlineService = new();
@@ -83,6 +90,7 @@ public sealed class WindowManagerService : IDisposable
         if (_pseudoMaximized.TryRemove(hwnd, out var restore))
         {
             Suppress(hwnd, () => SetWindowRect(hwnd, restore));
+            TrackNormalWindow(hwnd, restore);
             return;
         }
 
@@ -97,7 +105,9 @@ public sealed class WindowManagerService : IDisposable
             return;
         }
 
+        TrackNormalWindow(hwnd, current);
         _pseudoMaximized[hwnd] = current;
+        _windowZones[hwnd] = zone.Id;
         Suppress(hwnd, () => FitWindowToZone(hwnd, zone));
     }
 
@@ -119,7 +129,7 @@ public sealed class WindowManagerService : IDisposable
             .ThenBy(z => z.XInches)
             .ToList();
 
-        var active = DisplayGeometry.FindZoneForMaximize(_display, _layout, current);
+        var active = ResolveAssignedZone(hwnd, current);
         var index = active is null ? 0 : ordered.FindIndex(z => z.Id == active.Id);
         if (index < 0) index = 0;
 
@@ -128,6 +138,7 @@ public sealed class WindowManagerService : IDisposable
 
         var target = ordered[index];
         var wasPseudoMaximized = _pseudoMaximized.ContainsKey(hwnd);
+        _windowZones[hwnd] = target.Id;
 
         if (wasPseudoMaximized)
         {
@@ -143,7 +154,8 @@ public sealed class WindowManagerService : IDisposable
     {
         AddHook(EventSystemForeground, EventSystemForeground);
         AddHook(EventSystemMoveSizeStart, EventSystemMoveSizeEnd);
-        AddHook(EventObjectLocationChange, EventObjectLocationChange);
+        AddHook(EventObjectDestroy, EventObjectDestroy);
+        AddHook(EventObjectStateChange, EventObjectLocationChange);
     }
 
     private void AddHook(uint min, uint max)
@@ -162,17 +174,28 @@ public sealed class WindowManagerService : IDisposable
             return;
         }
 
-        if (eventType >= EventObjectLocationChange && idObject != ObjidWindow)
+        if (eventType >= EventObjectStart && idObject != ObjidWindow)
         {
             return;
         }
 
-        _dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() => HandleEvent(eventType, hwnd)));
+        _dispatcher.BeginInvoke(DispatcherPriority.Send, new Action(() => HandleEvent(eventType, hwnd)));
     }
 
     private void HandleEvent(uint eventType, IntPtr hwnd)
     {
-        if (!_enabled || _display is null || _layout is null || _suppressed.ContainsKey(hwnd) || !IsEligibleWindow(hwnd))
+        if (!_enabled || _display is null || _layout is null)
+        {
+            return;
+        }
+
+        if (eventType == EventObjectDestroy)
+        {
+            ForgetWindow(hwnd);
+            return;
+        }
+
+        if (_suppressed.ContainsKey(hwnd) || !IsEligibleWindow(hwnd))
         {
             return;
         }
@@ -185,22 +208,34 @@ public sealed class WindowManagerService : IDisposable
 
         if (eventType == EventSystemMoveSizeEnd)
         {
-            if (_snapOnDrag && IsShiftDown() && TryGetWindowRect(hwnd, out var movedRect))
+            if (TryGetWindowRect(hwnd, out var movedRect))
             {
-                var zone = DisplayGeometry.FindBestZone(_display, _layout, movedRect);
-                if (zone is not null)
+                TrackNormalWindow(hwnd, movedRect);
+
+                if (_snapOnDrag && IsShiftDown())
                 {
-                    _pseudoMaximized[hwnd] = movedRect;
-                    Suppress(hwnd, () => FitWindowToZone(hwnd, zone));
+                    var zone = DisplayGeometry.FindBestZone(_display, _layout, movedRect);
+                    if (zone is not null)
+                    {
+                        _pseudoMaximized[hwnd] = movedRect;
+                        _windowZones[hwnd] = zone.Id;
+                        Suppress(hwnd, () => FitWindowToZone(hwnd, zone));
+                    }
                 }
             }
 
             return;
         }
 
-        if ((eventType == EventObjectLocationChange || eventType == EventSystemForeground) && IsZoomed(hwnd))
+        if ((eventType == EventObjectStateChange || eventType == EventObjectLocationChange || eventType == EventSystemForeground) && IsZoomed(hwnd))
         {
             HandleNativeMaximize(hwnd);
+            return;
+        }
+
+        if (eventType == EventObjectLocationChange || eventType == EventSystemForeground)
+        {
+            TrackNormalWindow(hwnd);
         }
     }
 
@@ -218,13 +253,39 @@ public sealed class WindowManagerService : IDisposable
                 ShowWindow(hwnd, SwRestore);
                 SetWindowRect(hwnd, previousRestoreRect);
             });
+            TrackNormalWindow(hwnd, previousRestoreRect);
             return;
+        }
+
+        var normal = GetBestRestoreRect(hwnd);
+        if (normal is null)
+        {
+            return;
+        }
+
+        var zone = ResolveAssignedZone(hwnd, normal.Value);
+        if (zone is null)
+        {
+            return;
+        }
+
+        _lastNormalRects[hwnd] = normal.Value;
+        _windowZones[hwnd] = zone.Id;
+        _pseudoMaximized[hwnd] = normal.Value;
+        ApplyNativeZoneMaximize(hwnd, zone);
+    }
+
+    private PixelRect? GetBestRestoreRect(IntPtr hwnd)
+    {
+        if (_lastNormalRects.TryGetValue(hwnd, out var cached) && cached.Width > 0 && cached.Height > 0)
+        {
+            return cached;
         }
 
         var placement = new WindowPlacement { Length = Marshal.SizeOf<WindowPlacement>() };
         if (!GetWindowPlacement(hwnd, ref placement))
         {
-            return;
+            return null;
         }
 
         var normal = new PixelRect(
@@ -233,18 +294,109 @@ public sealed class WindowManagerService : IDisposable
             placement.NormalPosition.Right - placement.NormalPosition.Left,
             placement.NormalPosition.Bottom - placement.NormalPosition.Top);
 
-        var zone = DisplayGeometry.FindZoneForMaximize(_display, _layout, normal);
-        if (zone is null)
+        return normal.Width > 0 && normal.Height > 0 ? normal : null;
+    }
+
+    private VirtualMonitorZone? ResolveAssignedZone(IntPtr hwnd, PixelRect fallbackRect)
+    {
+        if (_layout is null || _display is null)
+        {
+            return null;
+        }
+
+        if (_windowZones.TryGetValue(hwnd, out var zoneId))
+        {
+            var assigned = _layout.Zones.FirstOrDefault(zone => zone.Id == zoneId);
+            if (assigned is not null)
+            {
+                return assigned;
+            }
+
+            _windowZones.TryRemove(hwnd, out _);
+        }
+
+        return DisplayGeometry.FindZoneForMaximize(_display, _layout, fallbackRect);
+    }
+
+    private void TrackNormalWindow(IntPtr hwnd)
+    {
+        if (TryGetWindowRect(hwnd, out var rect))
+        {
+            TrackNormalWindow(hwnd, rect);
+        }
+    }
+
+    private void TrackNormalWindow(IntPtr hwnd, PixelRect rect)
+    {
+        if (_display is null || _layout is null || rect.Width <= 0 || rect.Height <= 0)
         {
             return;
         }
 
-        _pseudoMaximized[hwnd] = normal;
+        _lastNormalRects[hwnd] = rect;
+        var zone = DisplayGeometry.FindZoneForMaximize(_display, _layout, rect);
+        if (zone is null)
+        {
+            _windowZones.TryRemove(hwnd, out _);
+        }
+        else
+        {
+            _windowZones[hwnd] = zone.Id;
+        }
+    }
+
+    private void ApplyNativeZoneMaximize(IntPtr hwnd, VirtualMonitorZone zone)
+    {
         Suppress(hwnd, () =>
         {
             ShowWindow(hwnd, SwRestore);
             FitWindowToZone(hwnd, zone);
         });
+
+        ScheduleNativeMaximizeCorrection(hwnd, zone.Id);
+    }
+
+    private void ScheduleNativeMaximizeCorrection(IntPtr hwnd, Guid zoneId)
+    {
+        var timer = new DispatcherTimer(DispatcherPriority.Send, _dispatcher)
+        {
+            Interval = TimeSpan.FromMilliseconds(NativeMaximizeCorrectionDelayMs)
+        };
+
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+
+            if (!_enabled || _display is null || _layout is null || !_pseudoMaximized.ContainsKey(hwnd) || !IsEligibleWindow(hwnd))
+            {
+                return;
+            }
+
+            var zone = _layout.Zones.FirstOrDefault(candidate => candidate.Id == zoneId);
+            if (zone is null)
+            {
+                return;
+            }
+
+            var target = DisplayGeometry.ZoneToPixels(_display, zone);
+            var needsCorrection = IsZoomed(hwnd) || !TryGetWindowRect(hwnd, out var current) || !RectsApproximatelyEqual(current, target);
+            if (!needsCorrection)
+            {
+                return;
+            }
+
+            Suppress(hwnd, () =>
+            {
+                if (IsZoomed(hwnd))
+                {
+                    ShowWindow(hwnd, SwRestore);
+                }
+
+                SetWindowRect(hwnd, target);
+            });
+        };
+
+        timer.Start();
     }
 
     private void FitWindowToZone(IntPtr hwnd, VirtualMonitorZone zone)
@@ -269,8 +421,19 @@ public sealed class WindowManagerService : IDisposable
         var height = Math.Min(current.Height, target.Height);
         var left = target.Left + Math.Max(0, (target.Width - width) / 2);
         var top = target.Top + Math.Max(0, (target.Height - height) / 2);
+        var moved = new PixelRect(left, top, width, height);
 
-        Suppress(hwnd, () => SetWindowRect(hwnd, new PixelRect(left, top, width, height)));
+        Suppress(hwnd, () => SetWindowRect(hwnd, moved));
+        _lastNormalRects[hwnd] = moved;
+        _windowZones[hwnd] = zone.Id;
+    }
+
+    private static bool RectsApproximatelyEqual(PixelRect a, PixelRect b)
+    {
+        return Math.Abs(a.Left - b.Left) <= RectTolerancePx &&
+               Math.Abs(a.Top - b.Top) <= RectTolerancePx &&
+               Math.Abs(a.Width - b.Width) <= RectTolerancePx &&
+               Math.Abs(a.Height - b.Height) <= RectTolerancePx;
     }
 
     private static bool TryGetWindowRect(IntPtr hwnd, out PixelRect rect)
@@ -307,6 +470,14 @@ public sealed class WindowManagerService : IDisposable
 
         var exStyle = GetWindowLongPtr(hwnd, GwlExStyle).ToInt64();
         return (exStyle & WsExToolWindow) == 0;
+    }
+
+    private void ForgetWindow(IntPtr hwnd)
+    {
+        _pseudoMaximized.TryRemove(hwnd, out _);
+        _lastNormalRects.TryRemove(hwnd, out _);
+        _windowZones.TryRemove(hwnd, out _);
+        _suppressed.TryRemove(hwnd, out _);
     }
 
     private void Suppress(IntPtr hwnd, Action action)

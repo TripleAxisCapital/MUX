@@ -1,3 +1,4 @@
+## MUX
 <div align="center">
   <img src="docs/assets/mux-logo.jpg" width="260" alt="MUX logo" />
 

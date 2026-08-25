@@ -49,7 +49,7 @@ public partial class MainWindow
         var itemStyle = new Style(typeof(ComboBoxItem));
         itemStyle.Setters.Add(new Setter(Control.ForegroundProperty, muted));
         itemStyle.Setters.Add(new Setter(Control.BackgroundProperty, background));
-        itemStyle.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(9, 7)));
+        itemStyle.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(9, 7, 9, 7)));
         itemStyle.Setters.Add(new Setter(Control.HorizontalContentAlignmentProperty, HorizontalAlignment.Stretch));
 
         var hoverTrigger = new Trigger { Property = ComboBoxItem.IsMouseOverProperty, Value = true };
@@ -66,6 +66,10 @@ public partial class MainWindow
 
         DisplayCombo.Foreground = muted;
         ZoneAspectBox.Foreground = muted;
+        foreach (var item in ZoneAspectBox.Items.OfType<ComboBoxItem>())
+        {
+            item.Foreground = muted;
+        }
     }
 
     private void InstallCloneMonitorButton()
@@ -86,7 +90,7 @@ public partial class MainWindow
             Content = "Clone monitor",
             Tag = "MUX_CLONE_MONITOR",
             Margin = new Thickness(0, 8, 0, 0),
-            Padding = new Thickness(9, 7)
+            Padding = new Thickness(9, 7, 9, 7)
         };
         cloneButton.SetResourceReference(FrameworkElement.StyleProperty, "MuxButton");
         cloneButton.Click += CloneZone_Click;
@@ -112,7 +116,7 @@ public partial class MainWindow
             Content = "Customize shortcuts",
             Tag = "MUX_SHORTCUT_SETTINGS",
             Margin = new Thickness(0, 12, 0, 0),
-            Padding = new Thickness(12, 8)
+            Padding = new Thickness(12, 8, 12, 8)
         };
         button.SetResourceReference(FrameworkElement.StyleProperty, "MuxButton");
         button.Click += CustomizeShortcuts_Click;

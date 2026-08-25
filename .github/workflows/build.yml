@@ -38,6 +38,26 @@ jobs:
         run: dotnet build src/MUX.App/MUX.App.csproj -c Release --no-restore
       - name: Publish self-contained app
         run: dotnet publish src/MUX.App/MUX.App.csproj -c Release -r win-x64 --self-contained true -o artifacts/MUX
+      - name: Launch smoke test
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD "artifacts/MUX/MUX.exe"
+          $process = Start-Process -FilePath $exe -ArgumentList "--background" -PassThru
+          Start-Sleep -Seconds 5
+          $process.Refresh()
+
+          if ($process.HasExited) {
+            $log = Join-Path $env:LOCALAPPDATA "MUX/startup-error.log"
+            if (Test-Path $log) {
+              Write-Host "--- MUX startup-error.log ---"
+              Get-Content $log
+              Write-Host "-----------------------------"
+            }
+            throw "MUX exited during the startup smoke test with exit code $($process.ExitCode)."
+          }
+
+          Stop-Process -Id $process.Id -Force
+          Write-Host "MUX remained alive through the startup smoke test."
       - name: Package
         shell: pwsh
         run: Compress-Archive -Path artifacts/MUX/* -DestinationPath artifacts/MUX-win-x64.zip -CompressionLevel Optimal

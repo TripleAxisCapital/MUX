@@ -6,10 +6,9 @@ using MUX.Core.Models;
 namespace MUX.App.Services;
 
 /// <summary>
-/// Keeps true application fullscreen modes (for example Edge/Chrome F11) inside
-/// the MUX virtual monitor the window belonged to before entering fullscreen.
-/// Unlike pseudo-maximize, this does not restore the native window style, so the
-/// application remains in its own fullscreen UI while its outer bounds are clamped.
+/// Keeps application-owned fullscreen modes (Edge/Chrome F11, media fullscreen,
+/// borderless presentation modes) inside the MUX virtual monitor that owned the
+/// window before fullscreen began.
 /// </summary>
 public sealed class FullscreenWindowService : IDisposable
 {
@@ -17,10 +16,14 @@ public sealed class FullscreenWindowService : IDisposable
     private const int GwlExStyle = -20;
     private const long WsCaption = 0x00C00000L;
     private const long WsExToolWindow = 0x00000080L;
+    private const int SwRestore = 9;
     private const uint SwpNoZOrder = 0x0004;
     private const uint SwpNoActivate = 0x0010;
-    private const int RectTolerancePx = 4;
-    private const int PhysicalFullscreenTolerancePx = 12;
+    private const uint SwpFrameChanged = 0x0020;
+    private const uint SwpShowWindow = 0x0040;
+    private const uint SwpNoOwnerZOrder = 0x0200;
+    private const int RectTolerancePx = 5;
+    private const int PhysicalFullscreenTolerancePx = 16;
 
     private readonly Func<DisplayProfile?> _displayProvider;
     private readonly Func<LayoutProfile?> _layoutProvider;
@@ -29,7 +32,8 @@ public sealed class FullscreenWindowService : IDisposable
     private readonly Dictionary<IntPtr, PixelRect> _lastNormalRects = new();
     private readonly Dictionary<IntPtr, Guid> _windowZones = new();
     private readonly Dictionary<int, Guid> _processZones = new();
-    private readonly Dictionary<IntPtr, FullscreenState> _constrained = new();
+    private readonly Dictionary<IntPtr, bool> _lastBorderlessState = new();
+    private readonly HashSet<IntPtr> _constrainedFullscreen = new();
 
     public FullscreenWindowService(
         Func<DisplayProfile?> displayProvider,
@@ -42,7 +46,7 @@ public sealed class FullscreenWindowService : IDisposable
 
         _timer = new DispatcherTimer(DispatcherPriority.Send)
         {
-            Interval = TimeSpan.FromMilliseconds(70)
+            Interval = TimeSpan.FromMilliseconds(45)
         };
         _timer.Tick += Timer_Tick;
         _timer.Start();
@@ -52,7 +56,7 @@ public sealed class FullscreenWindowService : IDisposable
     {
         if (!_enabledProvider())
         {
-            _constrained.Clear();
+            _constrainedFullscreen.Clear();
             return;
         }
 
@@ -60,7 +64,7 @@ public sealed class FullscreenWindowService : IDisposable
         var layout = _layoutProvider();
         if (display is null || layout is null || layout.Zones.Count == 0)
         {
-            _constrained.Clear();
+            _constrainedFullscreen.Clear();
             return;
         }
 
@@ -70,97 +74,60 @@ public sealed class FullscreenWindowService : IDisposable
             return;
         }
 
-        // Native maximize is handled by WindowManagerService. This service is only
-        // responsible for true application fullscreen modes such as browser F11.
+        var borderless = IsBorderless(hwnd);
+        var wasBorderless = _lastBorderlessState.TryGetValue(hwnd, out var previousBorderless) && previousBorderless;
+        _lastBorderlessState[hwnd] = borderless;
+
+        if (_constrainedFullscreen.Contains(hwnd))
+        {
+            if (!borderless)
+            {
+                _constrainedFullscreen.Remove(hwnd);
+                if (!IsZoomed(hwnd))
+                {
+                    TrackNormalWindow(hwnd, current, display, layout);
+                }
+                return;
+            }
+
+            var constrainedZone = ResolveZone(hwnd, display, layout);
+            if (constrainedZone is null)
+            {
+                _constrainedFullscreen.Remove(hwnd);
+                return;
+            }
+
+            ForceFullscreenIntoZone(hwnd, DisplayGeometry.ZoneToPixels(display, constrainedZone));
+            return;
+        }
+
+        if (borderless)
+        {
+            var zone = ResolveZone(hwnd, display, layout);
+            if (zone is not null)
+            {
+                var target = DisplayGeometry.ZoneToPixels(display, zone);
+                var styleJustChangedToBorderless = !wasBorderless && _lastNormalRects.ContainsKey(hwnd);
+                var wantsPhysicalFullscreen = CoversPhysicalDisplay(current, display);
+                var borderlessAndZoomed = IsZoomed(hwnd);
+
+                if (styleJustChangedToBorderless || wantsPhysicalFullscreen || borderlessAndZoomed)
+                {
+                    _constrainedFullscreen.Add(hwnd);
+                    _windowZones[hwnd] = zone.Id;
+                    ForceFullscreenIntoZone(hwnd, target);
+                    return;
+                }
+            }
+        }
+
+        // Ordinary Windows maximize is handled by WindowManagerService. Do not let
+        // this fullscreen service fight that behavior unless the app is borderless.
         if (IsZoomed(hwnd))
         {
             return;
         }
 
-        if (_constrained.TryGetValue(hwnd, out var state))
-        {
-            HandleConstrainedWindow(hwnd, current, state, display, layout);
-            return;
-        }
-
-        if (CoversPhysicalDisplay(current, display))
-        {
-            var zone = ResolveZone(hwnd, display, layout);
-            if (zone is null)
-            {
-                return;
-            }
-
-            var target = DisplayGeometry.ZoneToPixels(display, zone);
-            if (RectsApproximatelyEqual(target, DisplayBounds(display)))
-            {
-                return;
-            }
-
-            var stateForFullscreen = new FullscreenState(
-                zone.Id,
-                IsBorderless(hwnd),
-                DateTime.UtcNow,
-                DateTime.UtcNow);
-
-            _constrained[hwnd] = stateForFullscreen;
-            ConstrainToZone(hwnd, target);
-            return;
-        }
-
-        TrackNormalWindow(hwnd, current, display, layout);
-    }
-
-    private void HandleConstrainedWindow(
-        IntPtr hwnd,
-        PixelRect current,
-        FullscreenState state,
-        DisplayProfile display,
-        LayoutProfile layout)
-    {
-        var zone = layout.Zones.FirstOrDefault(candidate => candidate.Id == state.ZoneId);
-        if (zone is null)
-        {
-            _constrained.Remove(hwnd);
-            return;
-        }
-
-        var target = DisplayGeometry.ZoneToPixels(display, zone);
-        var now = DateTime.UtcNow;
-
-        if (CoversPhysicalDisplay(current, display))
-        {
-            state = state with { LastFullscreenSignalUtc = now };
-            _constrained[hwnd] = state;
-            ConstrainToZone(hwnd, target);
-            return;
-        }
-
-        if (RectsApproximatelyEqual(current, target))
-        {
-            // Browser F11 and most media fullscreen modes remove WS_CAPTION. Keep
-            // enforcing while that borderless fullscreen style is active.
-            if (IsBorderless(hwnd))
-            {
-                return;
-            }
-
-            // A captioned window can briefly regain its normal style before the
-            // application finishes the fullscreen transition. Give that transition
-            // a short grace period, then release it back to normal MUX tracking.
-            if (now - state.LastFullscreenSignalUtc < TimeSpan.FromMilliseconds(550))
-            {
-                return;
-            }
-
-            _constrained.Remove(hwnd);
-            TrackNormalWindow(hwnd, current, display, layout);
-            return;
-        }
-
-        // The application moved/restored itself somewhere other than the physical
-        // display or the MUX zone, which is the strongest signal that fullscreen ended.
-        _constrained.Remove(hwnd);
         TrackNormalWindow(hwnd, current, display, layout);
     }
 
@@ -176,7 +143,7 @@ public sealed class FullscreenWindowService : IDisposable
         }
 
         GetWindowThreadProcessId(hwnd, out var processId);
-        if (_processZones.TryGetValue(processId, out var processZoneId))
+        if (processId != 0 && _processZones.TryGetValue(processId, out var processZoneId))
         {
             var processZone = layout.Zones.FirstOrDefault(zone => zone.Id == processZoneId);
             if (processZone is not null)
@@ -238,8 +205,15 @@ public sealed class FullscreenWindowService : IDisposable
         }
     }
 
-    private static void ConstrainToZone(IntPtr hwnd, PixelRect target)
+    private static void ForceFullscreenIntoZone(IntPtr hwnd, PixelRect target)
     {
+        // Chromium can keep WS_MAXIMIZE set while F11 is active. Restore only the
+        // Windows show state first; the app's own borderless fullscreen UI remains.
+        if (IsZoomed(hwnd))
+        {
+            ShowWindow(hwnd, SwRestore);
+        }
+
         SetWindowPos(
             hwnd,
             IntPtr.Zero,
@@ -247,7 +221,15 @@ public sealed class FullscreenWindowService : IDisposable
             target.Top,
             target.Width,
             target.Height,
-            SwpNoZOrder | SwpNoActivate);
+            SwpNoZOrder | SwpNoActivate | SwpFrameChanged | SwpShowWindow | SwpNoOwnerZOrder);
+
+        // Some Chromium builds reassert their fullscreen rectangle immediately after
+        // the frame change. MoveWindow is a second Win32 path; the 45 ms enforcement
+        // loop then keeps the app pinned if it tries again.
+        if (TryGetWindowRect(hwnd, out var after) && !RectsApproximatelyEqual(after, target))
+        {
+            MoveWindow(hwnd, target.Left, target.Top, target.Width, target.Height, false);
+        }
     }
 
     private static PixelRect DisplayBounds(DisplayProfile display)
@@ -255,13 +237,13 @@ public sealed class FullscreenWindowService : IDisposable
 
     private static bool CoversPhysicalDisplay(PixelRect rect, DisplayProfile display)
     {
-        var displayRect = DisplayBounds(display);
-        return rect.Left <= displayRect.Left + PhysicalFullscreenTolerancePx &&
-               rect.Top <= displayRect.Top + PhysicalFullscreenTolerancePx &&
-               rect.Right >= displayRect.Right - PhysicalFullscreenTolerancePx &&
-               rect.Bottom >= displayRect.Bottom - PhysicalFullscreenTolerancePx &&
-               rect.Width >= displayRect.Width - PhysicalFullscreenTolerancePx * 2 &&
-               rect.Height >= displayRect.Height - PhysicalFullscreenTolerancePx * 2;
+        var bounds = DisplayBounds(display);
+        return rect.Left <= bounds.Left + PhysicalFullscreenTolerancePx &&
+               rect.Top <= bounds.Top + PhysicalFullscreenTolerancePx &&
+               rect.Right >= bounds.Right - PhysicalFullscreenTolerancePx &&
+               rect.Bottom >= bounds.Bottom - PhysicalFullscreenTolerancePx &&
+               rect.Width >= bounds.Width - PhysicalFullscreenTolerancePx * 2 &&
+               rect.Height >= bounds.Height - PhysicalFullscreenTolerancePx * 2;
     }
 
     private static bool RectsApproximatelyEqual(PixelRect a, PixelRect b)
@@ -327,14 +309,9 @@ public sealed class FullscreenWindowService : IDisposable
         _lastNormalRects.Clear();
         _windowZones.Clear();
         _processZones.Clear();
-        _constrained.Clear();
+        _lastBorderlessState.Clear();
+        _constrainedFullscreen.Clear();
     }
-
-    private sealed record FullscreenState(
-        Guid ZoneId,
-        bool WasBorderlessAtEntry,
-        DateTime EnteredUtc,
-        DateTime LastFullscreenSignalUtc);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct Rect
@@ -388,7 +365,15 @@ public sealed class FullscreenWindowService : IDisposable
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ShowWindow(IntPtr hwnd, int nCmdShow);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetWindowPos(IntPtr hwnd, IntPtr hwndInsertAfter, int x, int y, int cx, int cy, uint flags);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool MoveWindow(IntPtr hwnd, int x, int y, int width, int height, bool repaint);
 
     [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out int processId);

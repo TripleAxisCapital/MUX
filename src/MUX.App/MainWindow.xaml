@@ -122,7 +122,7 @@
                     </StackPanel>
                     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                         <Button Content="+ Add monitor" Style="{StaticResource MuxButton}" Click="AddMonitor_Click" />
-                        <Button Content="Edit on display" Margin="9,0,0,0" Style="{StaticResource MuxPrimaryButton}" Click="EditOnDisplay_Click" />
+                        <Button Content="Edit on display" Margin="9,0,0,0" Style="{StaticResource MuxButton}" Foreground="#F5F5F7" Background="#19191C" BorderBrush="#2A2A2F" Click="EditOnDisplay_Click" />
                     </StackPanel>
                 </Grid>
 

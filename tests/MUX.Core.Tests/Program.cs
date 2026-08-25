@@ -58,6 +58,31 @@ Run("best-zone selection prefers window center", () =>
     }
 });
 
+Run("maximize selection prefers the title-bar zone", () =>
+{
+    var display = new DisplayProfile { WidthPx = 3840, HeightPx = 2160, DiagonalInches = 100, CalibrationScale = 1 };
+    var layout = new LayoutProfile();
+    var top = new VirtualMonitorZone { Name = "Top", DiagonalInches = 27, AspectWidth = 16, AspectHeight = 9, XInches = 0, YInches = 0 };
+    var bottom = new VirtualMonitorZone { Name = "Bottom", DiagonalInches = 27, AspectWidth = 16, AspectHeight = 9, XInches = 0, YInches = 13.3 };
+    layout.Zones.Add(top);
+    layout.Zones.Add(bottom);
+
+    var topRect = DisplayGeometry.ZoneToPixels(display, top);
+    var window = new PixelRect(topRect.Left + 80, topRect.Bottom - 40, 700, 500);
+    var centerSelected = DisplayGeometry.FindBestZone(display, layout, window);
+    var maximizeSelected = DisplayGeometry.FindZoneForMaximize(display, layout, window);
+
+    if (centerSelected?.Id != bottom.Id)
+    {
+        throw new Exception("test window center did not land in the lower zone");
+    }
+
+    if (maximizeSelected?.Id != top.Id)
+    {
+        throw new Exception("maximize did not follow the title-bar zone");
+    }
+});
+
 if (failures.Count > 0)
 {
     Console.Error.WriteLine($"MUX.Core validation failed ({failures.Count}):");
@@ -65,7 +90,7 @@ if (failures.Count > 0)
     return 1;
 }
 
-Console.WriteLine("MUX.Core validation passed: 5/5 checks.");
+Console.WriteLine("MUX.Core validation passed: 6/6 checks.");
 return 0;
 
 void Run(string name, Action test)

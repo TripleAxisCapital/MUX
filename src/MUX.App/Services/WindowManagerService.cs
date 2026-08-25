@@ -26,10 +26,13 @@ public sealed class WindowManagerService : IDisposable
     private readonly ConcurrentDictionary<IntPtr, PixelRect> _pseudoMaximized = new();
     private readonly ConcurrentDictionary<IntPtr, byte> _suppressed = new();
     private readonly Dispatcher _dispatcher;
+    private readonly ZoneOutlineService _outlineService = new();
     private DisplayProfile? _display;
     private LayoutProfile? _layout;
     private bool _enabled;
     private bool _snapOnDrag;
+    private bool _showOutlines = true;
+    private double _outlineThickness = 2.0;
 
     public WindowManagerService()
     {
@@ -48,6 +51,20 @@ public sealed class WindowManagerService : IDisposable
         {
             InstallHooks();
         }
+
+        RefreshOutlines();
+    }
+
+    public void SetOutlineOptions(bool visible, double thickness)
+    {
+        _showOutlines = visible;
+        _outlineThickness = Math.Clamp(thickness, 1.0, 6.0);
+        RefreshOutlines();
+    }
+
+    public void RefreshOutlines()
+    {
+        _outlineService.Configure(_display, _layout, _enabled && _showOutlines, _outlineThickness);
     }
 
     public void ToggleForegroundZoneMaximize()
@@ -74,7 +91,7 @@ public sealed class WindowManagerService : IDisposable
             return;
         }
 
-        var zone = DisplayGeometry.FindBestZone(_display, _layout, current);
+        var zone = DisplayGeometry.FindZoneForMaximize(_display, _layout, current);
         if (zone is null)
         {
             return;
@@ -102,7 +119,7 @@ public sealed class WindowManagerService : IDisposable
             .ThenBy(z => z.XInches)
             .ToList();
 
-        var active = DisplayGeometry.FindBestZone(_display, _layout, current);
+        var active = DisplayGeometry.FindZoneForMaximize(_display, _layout, current);
         var index = active is null ? 0 : ordered.FindIndex(z => z.Id == active.Id);
         if (index < 0) index = 0;
 
@@ -216,7 +233,7 @@ public sealed class WindowManagerService : IDisposable
             placement.NormalPosition.Right - placement.NormalPosition.Left,
             placement.NormalPosition.Bottom - placement.NormalPosition.Top);
 
-        var zone = DisplayGeometry.FindBestZone(_display, _layout, normal);
+        var zone = DisplayGeometry.FindZoneForMaximize(_display, _layout, normal);
         if (zone is null)
         {
             return;
@@ -316,6 +333,7 @@ public sealed class WindowManagerService : IDisposable
 
     public void Dispose()
     {
+        _outlineService.Dispose();
         foreach (var hook in _hooks)
         {
             UnhookWinEvent(hook);

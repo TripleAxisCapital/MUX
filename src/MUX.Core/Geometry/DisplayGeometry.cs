@@ -13,6 +13,8 @@ public readonly record struct PixelRect(int Left, int Top, int Width, int Height
 
 public static class DisplayGeometry
 {
+    private const int TitleBarProbeOffsetPx = 24;
+
     public static SizeD PhysicalSizeFromDiagonal(double diagonalInches, double aspectWidth, double aspectHeight)
     {
         ValidatePositive(diagonalInches, nameof(diagonalInches));
@@ -98,13 +100,7 @@ public static class DisplayGeometry
             return null;
         }
 
-        var centerMatch = layout.Zones.FirstOrDefault(zone =>
-        {
-            var rect = ZoneToPixels(display, zone);
-            return windowRect.CenterX >= rect.Left && windowRect.CenterX < rect.Right &&
-                   windowRect.CenterY >= rect.Top && windowRect.CenterY < rect.Bottom;
-        });
-
+        var centerMatch = FindZoneContainingPoint(display, layout, windowRect.CenterX, windowRect.CenterY);
         if (centerMatch is not null)
         {
             return centerMatch;
@@ -114,6 +110,28 @@ public static class DisplayGeometry
             .Select(zone => new { Zone = zone, Area = IntersectionArea(windowRect, ZoneToPixels(display, zone)) })
             .OrderByDescending(x => x.Area)
             .FirstOrDefault(x => x.Area > 0)?.Zone;
+    }
+
+    public static VirtualMonitorZone? FindZoneForMaximize(DisplayProfile display, LayoutProfile layout, PixelRect windowRect)
+    {
+        if (layout.Zones.Count == 0)
+        {
+            return null;
+        }
+
+        var maxProbeOffset = Math.Max(0, windowRect.Height - 1);
+        var titleBarY = windowRect.Top + Math.Min(TitleBarProbeOffsetPx, maxProbeOffset);
+        var titleBarMatch = FindZoneContainingPoint(display, layout, windowRect.CenterX, titleBarY);
+        return titleBarMatch ?? FindBestZone(display, layout, windowRect);
+    }
+
+    private static VirtualMonitorZone? FindZoneContainingPoint(DisplayProfile display, LayoutProfile layout, int x, int y)
+    {
+        return layout.Zones.FirstOrDefault(zone =>
+        {
+            var rect = ZoneToPixels(display, zone);
+            return x >= rect.Left && x < rect.Right && y >= rect.Top && y < rect.Bottom;
+        });
     }
 
     public static (double AspectWidth, double AspectHeight) SimplifyAspect(int widthPx, int heightPx)

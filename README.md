@@ -8,6 +8,17 @@
   Turn a large Windows display into monitor-sized workspaces measured in real physical inches.
 
   <br />
+
+  <a href="https://github.com/TripleAxisCapital/MUX/releases/download/latest-build/MUX-win-x64.zip">
+    <img src="docs/assets/download-windows.svg" width="300" alt="Download MUX for Windows" />
+  </a>
+
+  <br />
+  <sub>Windows 10/11 · x64 · self-contained · no separate .NET install required</sub>
+  <br />
+  <sub><a href="https://github.com/TripleAxisCapital/MUX/releases/tag/latest-build">View latest build details</a></sub>
+
+  <br /><br />
   <img src="docs/assets/mux-hero.svg" alt="MUX arranging several virtual monitor workspaces inside one large physical display" />
 </div>
 
@@ -85,6 +96,16 @@ Create as many named layouts as you need — **Work**, **Trading**, **Developmen
 
 ---
 
+## Download
+
+The button at the top of this README always points to the rolling Windows x64 build from `main`:
+
+**[Download MUX for Windows](https://github.com/TripleAxisCapital/MUX/releases/download/latest-build/MUX-win-x64.zip)**
+
+GitHub Actions only refreshes this download after the Windows project builds and packages successfully. The release is self-contained, so users do not need to install the .NET runtime separately.
+
+---
+
 ## Physical sizing
 
 MUX uses the diagonal pixel count of the physical display to establish its initial pixel density:
@@ -156,7 +177,7 @@ dotnet build src/MUX.App/MUX.App.csproj -c Release
 dotnet publish src/MUX.App/MUX.App.csproj -c Release -r win-x64 --self-contained true -o artifacts/MUX
 ```
 
-Every push to `main` also runs Linux geometry validation and a real Windows x64 build in GitHub Actions.
+Every push to `main` runs Linux geometry validation and a real Windows x64 build in GitHub Actions. After a successful `main` build, CI also refreshes the stable `latest-build` GitHub Release used by the README download button.
 
 ---
 

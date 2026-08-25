@@ -22,6 +22,7 @@ public partial class ShortcutSettingsWindow : Window
     public ShortcutSettings Shortcuts { get; private set; } = new();
 
     private void ToggleButton_Click(object sender, RoutedEventArgs e) => BeginCapture(ToggleButton, _working.ToggleMaximize);
+    private void FullscreenButton_Click(object sender, RoutedEventArgs e) => BeginCapture(FullscreenButton, _working.ToggleFullscreen);
     private void PreviousButton_Click(object sender, RoutedEventArgs e) => BeginCapture(PreviousButton, _working.PreviousMonitor);
     private void NextButton_Click(object sender, RoutedEventArgs e) => BeginCapture(NextButton, _working.NextMonitor);
     private void EditButton_Click(object sender, RoutedEventArgs e) => BeginCapture(EditButton, _working.EditLayout);
@@ -103,6 +104,7 @@ public partial class ShortcutSettingsWindow : Window
         var bindings = new[]
         {
             _working.ToggleMaximize,
+            _working.ToggleFullscreen,
             _working.PreviousMonitor,
             _working.NextMonitor,
             _working.EditLayout
@@ -129,6 +131,7 @@ public partial class ShortcutSettingsWindow : Window
     private void RefreshButtons()
     {
         ToggleButton.Content = Format(_working.ToggleMaximize);
+        FullscreenButton.Content = Format(_working.ToggleFullscreen);
         PreviousButton.Content = Format(_working.PreviousMonitor);
         NextButton.Content = Format(_working.NextMonitor);
         EditButton.Content = Format(_working.EditLayout);

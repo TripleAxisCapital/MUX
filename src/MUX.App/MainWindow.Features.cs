@@ -11,6 +11,7 @@ public partial class MainWindow
 {
     private bool _featureControlsInstalled;
     private StackPanel? _shortcutSummaryPanel;
+    private MuxFullscreenService? _muxFullscreenService;
 
     public void InitializeFeatureControls()
     {
@@ -23,6 +24,18 @@ public partial class MainWindow
         ApplyDropdownTheme();
         InstallCloneMonitorButton();
         InstallShortcutSettingsButton();
+
+        _muxFullscreenService = new MuxFullscreenService(
+            () => _display,
+            () => _layout,
+            () => _state.Enabled);
+
+        Closed += (_, _) =>
+        {
+            _muxFullscreenService?.Dispose();
+            _muxFullscreenService = null;
+        };
+
         Loaded += FeatureControls_Loaded;
     }
 
@@ -33,6 +46,7 @@ public partial class MainWindow
 
         if (_hotkeys is not null)
         {
+            _hotkeys.Register(5, System.Windows.Input.Key.F, () => _muxFullscreenService?.ToggleForeground());
             _hotkeys.Reload(_state.Shortcuts, out _);
         }
 
@@ -128,6 +142,17 @@ public partial class MainWindow
             .OfType<Border>()
             .Select(border => border.Child as StackPanel)
             .FirstOrDefault(panel => panel?.Children.OfType<TextBlock>().FirstOrDefault()?.Text == "Keyboard");
+
+        if (_shortcutSummaryPanel is not null && _shortcutSummaryPanel.Children.OfType<TextBlock>().Count() < 6)
+        {
+            _shortcutSummaryPanel.Children.Insert(2, new TextBlock
+            {
+                Text = "Ctrl + Alt + F   MUX Fullscreen",
+                Foreground = new SolidColorBrush(Color.FromRgb(102, 102, 111)),
+                FontSize = 10,
+                Margin = new Thickness(0, 5, 0, 0)
+            });
+        }
     }
 
     private async void CloneZone_Click(object sender, RoutedEventArgs e)
@@ -208,15 +233,16 @@ public partial class MainWindow
         }
 
         var lines = _shortcutSummaryPanel.Children.OfType<TextBlock>().ToList();
-        if (lines.Count < 5)
+        if (lines.Count < 6)
         {
             return;
         }
 
         lines[1].Text = $"{ShortcutSettingsWindow.Format(settings.ToggleMaximize)}   Maximize / restore";
-        lines[2].Text = $"{ShortcutSettingsWindow.Format(settings.PreviousMonitor)}   Previous monitor";
-        lines[3].Text = $"{ShortcutSettingsWindow.Format(settings.NextMonitor)}   Next monitor";
-        lines[4].Text = $"{ShortcutSettingsWindow.Format(settings.EditLayout)}   Edit layout";
+        lines[2].Text = $"{ShortcutSettingsWindow.Format(settings.ToggleFullscreen)}   MUX Fullscreen";
+        lines[3].Text = $"{ShortcutSettingsWindow.Format(settings.PreviousMonitor)}   Previous monitor";
+        lines[4].Text = $"{ShortcutSettingsWindow.Format(settings.NextMonitor)}   Next monitor";
+        lines[5].Text = $"{ShortcutSettingsWindow.Format(settings.EditLayout)}   Edit layout";
     }
 
     private static string ShortcutActionName(int id) => id switch
@@ -225,6 +251,7 @@ public partial class MainWindow
         2 => "Previous monitor",
         3 => "Next monitor",
         4 => "Edit layout",
+        5 => "MUX Fullscreen",
         _ => "Shortcut"
     };
 }

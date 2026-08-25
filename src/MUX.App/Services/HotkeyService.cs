@@ -61,6 +61,7 @@ public sealed class HotkeyService : IDisposable
             2 => settings.PreviousMonitor,
             3 => settings.NextMonitor,
             4 => settings.EditLayout,
+            5 => settings.ToggleFullscreen,
             _ => ShortcutBinding.CtrlAlt(_defaultKeys.TryGetValue(id, out var key) ? key.ToString() : "M")
         };
     }

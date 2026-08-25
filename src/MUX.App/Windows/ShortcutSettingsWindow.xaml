@@ -1,7 +1,7 @@
 <Window x:Class="MUX.App.Windows.ShortcutSettingsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Keyboard shortcuts" Width="560" Height="565"
+        Title="Keyboard shortcuts" Width="560" Height="640"
         WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
         WindowStyle="None" AllowsTransparency="True" Background="Transparent"
         PreviewKeyDown="Window_PreviewKeyDown">
@@ -29,6 +29,15 @@
                         <TextBlock Text="Fit the foreground app to its MUX monitor." Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,3,12,0" />
                     </StackPanel>
                     <Button x:Name="ToggleButton" Grid.Column="1" Style="{StaticResource MuxButton}" HorizontalContentAlignment="Center" Click="ToggleButton_Click" />
+                </Grid>
+
+                <Grid Margin="0,0,0,12">
+                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="210"/></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="MUX Fullscreen" FontSize="13" FontWeight="SemiBold" />
+                        <TextBlock Text="Make the app borderless and fill only its MUX monitor." Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,3,12,0" TextWrapping="Wrap" />
+                    </StackPanel>
+                    <Button x:Name="FullscreenButton" Grid.Column="1" Style="{StaticResource MuxButton}" HorizontalContentAlignment="Center" Click="FullscreenButton_Click" />
                 </Grid>
 
                 <Grid Margin="0,0,0,12">

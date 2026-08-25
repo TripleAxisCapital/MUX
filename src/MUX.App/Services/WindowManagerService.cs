@@ -38,6 +38,7 @@ public sealed class WindowManagerService : IDisposable
     private LayoutProfile? _layout;
     private bool _enabled;
     private bool _snapOnDrag;
+    private bool _snapRequiresShift = true;
     private bool _showOutlines = true;
     private double _outlineThickness = 2.0;
 
@@ -60,6 +61,11 @@ public sealed class WindowManagerService : IDisposable
         }
 
         RefreshOutlines();
+    }
+
+    public void SetSnapRequiresShift(bool requiresShift)
+    {
+        _snapRequiresShift = requiresShift;
     }
 
     public void SetOutlineOptions(bool visible, double thickness)
@@ -212,7 +218,7 @@ public sealed class WindowManagerService : IDisposable
             {
                 TrackNormalWindow(hwnd, movedRect);
 
-                if (_snapOnDrag && IsShiftDown())
+                if (_snapOnDrag && (!_snapRequiresShift || IsShiftDown()))
                 {
                     var zone = DisplayGeometry.FindBestZone(_display, _layout, movedRect);
                     if (zone is not null)

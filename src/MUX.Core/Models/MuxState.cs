@@ -2,9 +2,10 @@ namespace MUX.Core.Models;
 
 public sealed class MuxState
 {
-    public int SchemaVersion { get; set; } = 3;
+    public int SchemaVersion { get; set; } = 4;
     public bool Enabled { get; set; } = true;
     public bool SnapOnDrag { get; set; } = true;
+    public bool SnapRequiresShift { get; set; } = true;
     public bool ShowZoneOutlines { get; set; } = true;
     public double ZoneOutlineThickness { get; set; } = 2.0;
     public bool LaunchAtStartup { get; set; }

@@ -11,6 +11,7 @@ public partial class MainWindow
     private bool _phantomLoading;
     private CheckBox? _outlineCheck;
     private ComboBox? _outlineThicknessBox;
+    private ComboBox? _snapModeBox;
     private FullscreenWindowService? _fullscreenWindowService;
 
     public void InitializePhantomWindows()
@@ -83,14 +84,36 @@ public partial class MainWindow
         }
 
         var muted = new SolidColorBrush(Color.FromRgb(153, 153, 163));
+        SnapCheck.Content = "Snap windows to monitors";
+
         var panel = new StackPanel
         {
             Margin = new Thickness(0, 12, 0, 0)
         };
 
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Snap trigger",
+            Foreground = muted,
+            FontSize = 11,
+            Margin = new Thickness(2, 0, 0, 7)
+        });
+
+        _snapModeBox = new ComboBox
+        {
+            Foreground = muted,
+            ToolTip = "Choose whether snapping happens automatically or only while holding Shift"
+        };
+        _snapModeBox.SetResourceReference(FrameworkElement.StyleProperty, "MuxComboBox");
+        AddSnapModeOption(_snapModeBox, "Automatic", requiresShift: false, muted);
+        AddSnapModeOption(_snapModeBox, "Hold Shift", requiresShift: true, muted);
+        _snapModeBox.SelectionChanged += SnapMode_SelectionChanged;
+        panel.Children.Add(_snapModeBox);
+
         _outlineCheck = new CheckBox
         {
-            Content = "Show monitor outlines"
+            Content = "Show monitor outlines",
+            Margin = new Thickness(0, 16, 0, 0)
         };
         _outlineCheck.SetResourceReference(FrameworkElement.StyleProperty, "MuxCheckBox");
         _outlineCheck.Click += OutlineVisibilityChanged_Click;
@@ -120,6 +143,19 @@ public partial class MainWindow
         behaviorPanel.Children.Insert(Math.Max(0, snapIndex + 1), panel);
     }
 
+    private static void AddSnapModeOption(ComboBox box, string label, bool requiresShift, Brush foreground)
+    {
+        var item = new ComboBoxItem
+        {
+            Content = label,
+            Tag = requiresShift,
+            Foreground = foreground,
+            Background = new SolidColorBrush(Color.FromRgb(21, 21, 24))
+        };
+        item.SetResourceReference(FrameworkElement.StyleProperty, "MuxComboBoxItem");
+        box.Items.Add(item);
+    }
+
     private static void AddThicknessOption(ComboBox box, string label, double thickness, Brush foreground)
     {
         var item = new ComboBoxItem
@@ -142,6 +178,13 @@ public partial class MainWindow
                 ? _state.ZoneOutlineThickness
                 : 2.0;
 
+            if (_snapModeBox is not null)
+            {
+                _snapModeBox.SelectedItem = _snapModeBox.Items
+                    .OfType<ComboBoxItem>()
+                    .FirstOrDefault(item => item.Tag is bool requiresShift && requiresShift == _state.SnapRequiresShift);
+            }
+
             if (_outlineCheck is not null)
             {
                 _outlineCheck.IsChecked = _state.ShowZoneOutlines;
@@ -160,7 +203,20 @@ public partial class MainWindow
             _phantomLoading = false;
         }
 
+        _windowManager.SetSnapRequiresShift(_state.SnapRequiresShift);
         ApplyOutlineOptions();
+    }
+
+    private async void SnapMode_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_phantomLoading || _snapModeBox?.SelectedItem is not ComboBoxItem { Tag: bool requiresShift })
+        {
+            return;
+        }
+
+        _state.SnapRequiresShift = requiresShift;
+        _windowManager.SetSnapRequiresShift(requiresShift);
+        await SaveStateAsync();
     }
 
     private async void OutlineVisibilityChanged_Click(object sender, RoutedEventArgs e)

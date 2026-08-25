@@ -1,6 +1,5 @@
-## MUX
 <div align="center">
-  <img src="docs/assets/mux-logo.jpg" width="260" alt="MUX logo" />
+  <img src="./docs/assets/mux-logo.png" width="220" alt="MUX logo" />
 
   # MUX
 

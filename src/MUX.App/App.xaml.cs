@@ -1,12 +1,14 @@
 using System.Drawing;
-using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Media.Imaging;
 using Forms = System.Windows.Forms;
 
 namespace MUX.App;
 
 public partial class App : Application
 {
+    private static readonly Uri MuxIconUri = new("pack://application:,,,/Assets/mux-app.ico", UriKind.Absolute);
+
     private Forms.NotifyIcon? _trayIcon;
     private MainWindow? _mainWindow;
     private Icon? _muxIcon;
@@ -16,7 +18,10 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
-        _mainWindow = new MainWindow();
+        _mainWindow = new MainWindow
+        {
+            Icon = BitmapFrame.Create(MuxIconUri)
+        };
         MainWindow = _mainWindow;
         _mainWindow.InitializeFeatureControls();
         _mainWindow.InitializePhantomWindows();
@@ -27,7 +32,7 @@ public partial class App : Application
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("Quit MUX", null, (_, _) => Quit());
 
-        _muxIcon = CreateMuxIcon();
+        _muxIcon = LoadMuxIcon();
         _trayIcon = new Forms.NotifyIcon
         {
             Icon = _muxIcon,
@@ -74,33 +79,13 @@ public partial class App : Application
         base.OnExit(e);
     }
 
-    private static Icon CreateMuxIcon()
+    private static Icon LoadMuxIcon()
     {
-        using var bitmap = new Bitmap(64, 64);
-        using (var graphics = Graphics.FromImage(bitmap))
-        {
-            graphics.Clear(Color.FromArgb(10, 10, 11));
-            graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            using var font = new Font("Segoe UI", 34, System.Drawing.FontStyle.Bold, GraphicsUnit.Pixel);
-            using var brush = new SolidBrush(Color.FromArgb(245, 245, 247));
-            var text = "M";
-            var size = graphics.MeasureString(text, font);
-            graphics.DrawString(text, font, brush, (64 - size.Width) / 2f, (64 - size.Height) / 2f - 1f);
-        }
+        var resource = Application.GetResourceStream(MuxIconUri)
+            ?? throw new InvalidOperationException("MUX icon resource could not be loaded.");
 
-        var handle = bitmap.GetHicon();
-        try
-        {
-            using var temporary = Icon.FromHandle(handle);
-            return (Icon)temporary.Clone();
-        }
-        finally
-        {
-            DestroyIcon(handle);
-        }
+        using var stream = resource.Stream;
+        using var source = new Icon(stream);
+        return (Icon)source.Clone();
     }
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool DestroyIcon(IntPtr hIcon);
 }

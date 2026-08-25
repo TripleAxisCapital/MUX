@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="docs/assets/mux-logo.svg" width="92" alt="MUX logo" />
+  <img src="docs/assets/mux-logo.jpg" width="260" alt="MUX logo" />
 
   # MUX
 
@@ -79,12 +79,13 @@ Drag the workspaces wherever you want. Edges magnetically align. Select **Save l
 
 ## Daily use
 
-MUX stays active in the Windows system tray. Your normal desktop remains clean — monitor borders are not permanently drawn over the screen.
+MUX stays active in the Windows system tray. Optional black monitor outlines remain visible when enabled, so empty virtual monitors are still clearly defined without intercepting mouse input.
 
 | Action | Behavior |
 |---|---|
 | Maximize a normal application | MUX converts the maximize into a monitor-sized maximize for the region containing that window |
 | Maximize it again | MUX restores the application's previous bounds |
+| Show monitor outlines | Keep click-through black borders visible around empty or occupied MUX monitors |
 | `Ctrl + Alt + M` | Maximize / restore the foreground window inside its current MUX monitor |
 | `Ctrl + Alt + ←` | Move the foreground window to the previous MUX monitor |
 | `Ctrl + Alt + →` | Move the foreground window to the next MUX monitor |

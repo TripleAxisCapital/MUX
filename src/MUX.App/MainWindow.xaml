@@ -22,9 +22,11 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="18,0,0,0">
-                <Border Width="22" Height="22" CornerRadius="6" Background="White" Margin="0,0,10,0">
-                    <TextBlock Text="M" Foreground="#0A0A0B" FontWeight="Bold" FontSize="12" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                </Border>
+                <Image Width="22" Height="22"
+                       Source="pack://application:,,,/Assets/mux-logo.png"
+                       Stretch="UniformToFill"
+                       SnapsToDevicePixels="True"
+                       Margin="0,0,10,0" />
                 <TextBlock Text="MUX" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" />
                 <TextBlock Text="  /  Display workspace" Foreground="#676770" FontSize="12" VerticalAlignment="Center" />
             </StackPanel>

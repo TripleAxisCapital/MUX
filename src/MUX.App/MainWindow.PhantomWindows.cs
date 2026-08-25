@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using MUX.App.Services;
 
 namespace MUX.App;
 
@@ -21,6 +22,8 @@ public partial class MainWindow
         _phantomControlsInstalled = true;
         InstallOutlineControls();
         WorkspaceCanvas.LayoutChanged += (_, _) => _windowManager.RefreshOutlines();
+        ZoneOutlineService.LayoutEdited -= ZoneOutlineService_LayoutEdited;
+        ZoneOutlineService.LayoutEdited += ZoneOutlineService_LayoutEdited;
         Loaded += PhantomWindows_Loaded;
     }
 
@@ -47,7 +50,7 @@ public partial class MainWindow
 
         panel.Children.Add(new TextBlock
         {
-            Text = "Outline thickness",
+            Text = "Default outline thickness",
             Foreground = muted,
             FontSize = 11,
             Margin = new Thickness(2, 12, 0, 7)
@@ -130,6 +133,17 @@ public partial class MainWindow
 
         _state.ZoneOutlineThickness = thickness;
         ApplyOutlineOptions();
+        await SaveStateAsync();
+    }
+
+    private async void ZoneOutlineService_LayoutEdited(object? sender, EventArgs e)
+    {
+        if (_loading || _display is null || _layout is null)
+        {
+            return;
+        }
+
+        RefreshWorkspace();
         await SaveStateAsync();
     }
 

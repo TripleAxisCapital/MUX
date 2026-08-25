@@ -9,6 +9,8 @@ public sealed class VirtualMonitorZone
     public double AspectHeight { get; set; } = 9.0;
     public double XInches { get; set; }
     public double YInches { get; set; }
+    public string OutlineColor { get; set; } = "#000000";
+    public double OutlineThickness { get; set; }
 
     public string AspectLabel => $"{AspectWidth:0.##}:{AspectHeight:0.##}";
 }

@@ -11,6 +11,7 @@ public partial class MainWindow
     private bool _phantomLoading;
     private CheckBox? _outlineCheck;
     private ComboBox? _outlineThicknessBox;
+    private FullscreenWindowService? _fullscreenWindowService;
 
     public void InitializePhantomWindows()
     {
@@ -20,11 +21,58 @@ public partial class MainWindow
         }
 
         _phantomControlsInstalled = true;
+        InstallLegibleFieldStyles();
         InstallOutlineControls();
         WorkspaceCanvas.LayoutChanged += (_, _) => _windowManager.RefreshOutlines();
         ZoneOutlineService.LayoutEdited -= ZoneOutlineService_LayoutEdited;
         ZoneOutlineService.LayoutEdited += ZoneOutlineService_LayoutEdited;
+
+        _fullscreenWindowService = new FullscreenWindowService(
+            () => _display,
+            () => _layout,
+            () => _state.Enabled);
+
+        Closed += (_, _) =>
+        {
+            ZoneOutlineService.LayoutEdited -= ZoneOutlineService_LayoutEdited;
+            _fullscreenWindowService?.Dispose();
+            _fullscreenWindowService = null;
+        };
+
         Loaded += PhantomWindows_Loaded;
+    }
+
+    private static void InstallLegibleFieldStyles()
+    {
+        var app = System.Windows.Application.Current;
+        if (app is null)
+        {
+            return;
+        }
+
+        InstallImplicitControlStyle<TextBox>(app, "MuxTextBox", "#151518", "#D1D1D6", "#35353B");
+        InstallImplicitControlStyle<ComboBox>(app, "MuxComboBox", "#151518", "#B8B8C0", "#35353B");
+        InstallImplicitControlStyle<ComboBoxItem>(app, "MuxComboBoxItem", "#151518", "#B8B8C0", "#151518");
+    }
+
+    private static void InstallImplicitControlStyle<T>(
+        System.Windows.Application app,
+        string baseStyleKey,
+        string backgroundHex,
+        string foregroundHex,
+        string borderHex)
+        where T : Control
+    {
+        if (app.TryFindResource(baseStyleKey) is not Style baseStyle)
+        {
+            return;
+        }
+
+        var style = new Style(typeof(T), baseStyle);
+        style.Setters.Add(new Setter(Control.BackgroundProperty, new SolidColorBrush((Color)ColorConverter.ConvertFromString(backgroundHex)!)));
+        style.Setters.Add(new Setter(Control.ForegroundProperty, new SolidColorBrush((Color)ColorConverter.ConvertFromString(foregroundHex)!)));
+        style.Setters.Add(new Setter(Control.BorderBrushProperty, new SolidColorBrush((Color)ColorConverter.ConvertFromString(borderHex)!)));
+        app.Resources[typeof(T)] = style;
     }
 
     private void InstallOutlineControls()
@@ -74,12 +122,15 @@ public partial class MainWindow
 
     private static void AddThicknessOption(ComboBox box, string label, double thickness, Brush foreground)
     {
-        box.Items.Add(new ComboBoxItem
+        var item = new ComboBoxItem
         {
             Content = label,
             Tag = thickness,
-            Foreground = foreground
-        });
+            Foreground = foreground,
+            Background = new SolidColorBrush(Color.FromRgb(21, 21, 24))
+        };
+        item.SetResourceReference(FrameworkElement.StyleProperty, "MuxComboBoxItem");
+        box.Items.Add(item);
     }
 
     private void PhantomWindows_Loaded(object sender, RoutedEventArgs e)

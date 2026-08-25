@@ -18,6 +18,7 @@ public partial class App : Application
 
         _mainWindow = new MainWindow();
         MainWindow = _mainWindow;
+        _mainWindow.InitializeFeatureControls();
         _mainWindow.Show();
 
         var menu = new Forms.ContextMenuStrip();

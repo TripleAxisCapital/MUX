@@ -2,7 +2,7 @@ namespace MUX.Core.Models;
 
 public sealed class MuxState
 {
-    public int SchemaVersion { get; set; } = 1;
+    public int SchemaVersion { get; set; } = 2;
     public bool Enabled { get; set; } = true;
     public bool SnapOnDrag { get; set; } = true;
     public bool LaunchAtStartup { get; set; }
@@ -10,4 +10,5 @@ public sealed class MuxState
     public Guid? ActiveLayoutId { get; set; }
     public List<DisplayProfile> Displays { get; set; } = new();
     public List<LayoutProfile> Layouts { get; set; } = new();
+    public ShortcutSettings Shortcuts { get; set; } = new();
 }

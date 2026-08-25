@@ -1,0 +1,79 @@
+<Window x:Class="MUX.App.Windows.ShortcutSettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Keyboard shortcuts" Width="560" Height="565"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        PreviewKeyDown="Window_PreviewKeyDown">
+    <Border Background="#F20F0F11" BorderBrush="#303036" BorderThickness="1" CornerRadius="20" Padding="28">
+        <Border.Effect>
+            <DropShadowEffect Color="Black" BlurRadius="28" Opacity="0.45" ShadowDepth="10" />
+        </Border.Effect>
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <StackPanel>
+                <TextBlock Text="Keyboard shortcuts" FontSize="26" FontWeight="SemiBold" />
+                <TextBlock Text="Click a shortcut, then press the key combination you want to use." Foreground="{StaticResource MutedBrush}" FontSize="13" Margin="0,6,0,0" />
+            </StackPanel>
+
+            <StackPanel Grid.Row="1" Margin="0,24,0,0">
+                <Grid Margin="0,0,0,12">
+                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="210"/></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Maximize / restore" FontSize="13" FontWeight="SemiBold" />
+                        <TextBlock Text="Fit the foreground app to its MUX monitor." Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,3,12,0" />
+                    </StackPanel>
+                    <Button x:Name="ToggleButton" Grid.Column="1" Style="{StaticResource MuxButton}" HorizontalContentAlignment="Center" Click="ToggleButton_Click" />
+                </Grid>
+
+                <Grid Margin="0,0,0,12">
+                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="210"/></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Previous monitor" FontSize="13" FontWeight="SemiBold" />
+                        <TextBlock Text="Move the foreground app left through the layout." Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,3,12,0" />
+                    </StackPanel>
+                    <Button x:Name="PreviousButton" Grid.Column="1" Style="{StaticResource MuxButton}" HorizontalContentAlignment="Center" Click="PreviousButton_Click" />
+                </Grid>
+
+                <Grid Margin="0,0,0,12">
+                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="210"/></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Next monitor" FontSize="13" FontWeight="SemiBold" />
+                        <TextBlock Text="Move the foreground app right through the layout." Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,3,12,0" />
+                    </StackPanel>
+                    <Button x:Name="NextButton" Grid.Column="1" Style="{StaticResource MuxButton}" HorizontalContentAlignment="Center" Click="NextButton_Click" />
+                </Grid>
+
+                <Grid Margin="0,0,0,12">
+                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="210"/></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Edit layout" FontSize="13" FontWeight="SemiBold" />
+                        <TextBlock Text="Open the full-display MUX layout editor." Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,3,12,0" />
+                    </StackPanel>
+                    <Button x:Name="EditButton" Grid.Column="1" Style="{StaticResource MuxButton}" HorizontalContentAlignment="Center" Click="EditButton_Click" />
+                </Grid>
+
+                <TextBlock Text="Each global shortcut must include Ctrl, Alt, Shift, or the Windows key. Duplicate shortcuts are not allowed." TextWrapping="Wrap" Foreground="#6E6E77" FontSize="10" LineHeight="15" Margin="0,5,0,0" />
+                <TextBlock x:Name="ErrorText" TextWrapping="Wrap" Foreground="#FF7A7A" FontSize="11" Margin="0,10,0,0" Visibility="Collapsed" />
+            </StackPanel>
+
+            <Grid Grid.Row="2" Margin="0,24,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="10" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Button Content="Restore defaults" Style="{StaticResource MuxButton}" Padding="12,8" Click="Defaults_Click" />
+                <Button Grid.Column="2" Content="Cancel" Style="{StaticResource MuxButton}" Padding="18,8" Click="Cancel_Click" />
+                <Button Grid.Column="4" Content="Save shortcuts" Style="{StaticResource MuxPrimaryButton}" Padding="18,8" Click="Save_Click" />
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

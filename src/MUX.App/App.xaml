@@ -92,13 +92,151 @@
             <Setter Property="CaretBrush" Value="White" />
         </Style>
 
+        <Style TargetType="ComboBoxItem" x:Key="MuxComboBoxItem">
+            <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+            <Setter Property="Background" Value="#151518" />
+            <Setter Property="Padding" Value="10,8" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBoxItem">
+                        <Border x:Name="ItemRoot"
+                                Background="{TemplateBinding Background}"
+                                Padding="{TemplateBinding Padding}"
+                                CornerRadius="6"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter
+                                HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                TextElement.Foreground="{TemplateBinding Foreground}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="ItemRoot" Property="Background" Value="#232327" />
+                                <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="ItemRoot" Property="Background" Value="#29292E" />
+                                <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="ItemRoot" Property="Opacity" Value="0.45" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style TargetType="ComboBox" x:Key="MuxComboBox">
             <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
             <Setter Property="Background" Value="#101012" />
             <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
-            <Setter Property="Padding" Value="8,6" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="10,8" />
             <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI" />
             <Setter Property="FontSize" Value="13" />
+            <Setter Property="MinHeight" Value="36" />
+            <Setter Property="ItemContainerStyle" Value="{StaticResource MuxComboBoxItem}" />
+            <Setter Property="ScrollViewer.CanContentScroll" Value="True" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid x:Name="Root" SnapsToDevicePixels="True">
+                            <ToggleButton x:Name="DropDownToggle"
+                                          Background="{TemplateBinding Background}"
+                                          BorderBrush="{TemplateBinding BorderBrush}"
+                                          BorderThickness="{TemplateBinding BorderThickness}"
+                                          Foreground="{TemplateBinding Foreground}"
+                                          Padding="{TemplateBinding Padding}"
+                                          Focusable="False"
+                                          ClickMode="Press"
+                                          IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border x:Name="ToggleRoot"
+                                                Background="{TemplateBinding Background}"
+                                                BorderBrush="{TemplateBinding BorderBrush}"
+                                                BorderThickness="{TemplateBinding BorderThickness}"
+                                                CornerRadius="8"
+                                                Padding="{TemplateBinding Padding}">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="22" />
+                                                </Grid.ColumnDefinitions>
+                                                <ContentPresenter
+                                                    VerticalAlignment="Center"
+                                                    HorizontalAlignment="Left"
+                                                    RecognizesAccessKey="True"
+                                                    TextElement.Foreground="{TemplateBinding Foreground}" />
+                                                <Path Grid.Column="1"
+                                                      Data="M 0 0 L 4 4 L 8 0"
+                                                      Stroke="#7C7C86"
+                                                      StrokeThickness="1.4"
+                                                      StrokeStartLineCap="Round"
+                                                      StrokeEndLineCap="Round"
+                                                      StrokeLineJoin="Round"
+                                                      HorizontalAlignment="Center"
+                                                      VerticalAlignment="Center" />
+                                            </Grid>
+                                        </Border>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                                <ContentPresenter
+                                    Content="{TemplateBinding SelectionBoxItem}"
+                                    ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                    ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"
+                                    VerticalAlignment="Center"
+                                    HorizontalAlignment="Stretch"
+                                    TextElement.Foreground="{TemplateBinding Foreground}" />
+                            </ToggleButton>
+
+                            <Popup x:Name="Popup"
+                                   Placement="Bottom"
+                                   IsOpen="{TemplateBinding IsDropDownOpen}"
+                                   AllowsTransparency="True"
+                                   Focusable="False"
+                                   PopupAnimation="Fade">
+                                <Border x:Name="DropDownBorder"
+                                        Margin="0,4,0,0"
+                                        MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}"
+                                        MaxHeight="300"
+                                        Background="#151518"
+                                        BorderBrush="#2F2F35"
+                                        BorderThickness="1"
+                                        CornerRadius="9"
+                                        Padding="4">
+                                    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                                  HorizontalScrollBarVisibility="Disabled"
+                                                  CanContentScroll="True">
+                                        <ItemsPresenter />
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="DropDownToggle" Property="Background" Value="#17171A" />
+                                <Setter TargetName="DropDownToggle" Property="BorderBrush" Value="#35353B" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                                <Setter TargetName="DropDownToggle" Property="BorderBrush" Value="#46464E" />
+                            </Trigger>
+                            <Trigger Property="IsDropDownOpen" Value="True">
+                                <Setter TargetName="DropDownToggle" Property="Background" Value="#19191D" />
+                                <Setter TargetName="DropDownToggle" Property="BorderBrush" Value="#3B3B42" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Root" Property="Opacity" Value="0.48" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
 
         <Style TargetType="CheckBox" x:Key="MuxCheckBox">

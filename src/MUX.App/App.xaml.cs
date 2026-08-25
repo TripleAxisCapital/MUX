@@ -1,11 +1,15 @@
 using System.Drawing;
+using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Media.Imaging;
 using Forms = System.Windows.Forms;
 
 namespace MUX.App;
 
 public partial class App : Application
 {
+    private static readonly Uri MuxLogoUri = new("pack://application:,,,/Assets/mux-logo.png", UriKind.Absolute);
+
     private Forms.NotifyIcon? _trayIcon;
     private MainWindow? _mainWindow;
     private Icon? _muxIcon;
@@ -29,6 +33,7 @@ public partial class App : Application
         base.OnStartup(e);
 
         _mainWindow = new MainWindow();
+        ApplyWindowIconSafely(_mainWindow);
         MainWindow = _mainWindow;
         _mainWindow.InitializeFeatureControls();
         _mainWindow.InitializePhantomWindows();
@@ -73,6 +78,19 @@ public partial class App : Application
         base.OnExit(e);
     }
 
+    private static void ApplyWindowIconSafely(Window window)
+    {
+        try
+        {
+            window.Icon = BitmapFrame.Create(MuxLogoUri);
+        }
+        catch (Exception exception)
+        {
+            // Branding must never prevent MUX from opening.
+            LogFailure("WindowIcon", exception);
+        }
+    }
+
     private void InitializeTrayIconSafely()
     {
         try
@@ -82,7 +100,7 @@ public partial class App : Application
             menu.Items.Add(new Forms.ToolStripSeparator());
             menu.Items.Add("Quit MUX", null, (_, _) => Quit());
 
-            _muxIcon = LoadMuxIconFromExecutable();
+            _muxIcon = LoadMuxIcon();
             _trayIcon = new Forms.NotifyIcon
             {
                 Icon = _muxIcon,
@@ -101,6 +119,37 @@ public partial class App : Application
             _muxIcon?.Dispose();
             _muxIcon = null;
         }
+    }
+
+    private static Icon LoadMuxIcon()
+    {
+        try
+        {
+            var resource = Application.GetResourceStream(MuxLogoUri);
+            if (resource is not null)
+            {
+                using var stream = resource.Stream;
+                using var source = new Bitmap(stream);
+                using var scaled = new Bitmap(source, new System.Drawing.Size(64, 64));
+                var handle = scaled.GetHicon();
+
+                try
+                {
+                    using var temporary = Icon.FromHandle(handle);
+                    return (Icon)temporary.Clone();
+                }
+                finally
+                {
+                    DestroyIcon(handle);
+                }
+            }
+        }
+        catch (Exception exception)
+        {
+            LogFailure("LogoIcon", exception);
+        }
+
+        return LoadMuxIconFromExecutable();
     }
 
     private static Icon LoadMuxIconFromExecutable()
@@ -140,4 +189,8 @@ public partial class App : Application
             // Never allow diagnostic logging itself to become a startup failure.
         }
     }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DestroyIcon(IntPtr hIcon);
 }

@@ -19,6 +19,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Resource Include="Assets\mux-app.ico" />
+    <Resource Include="Assets\mux-logo.png" />
     <ProjectReference Include="..\MUX.Core\MUX.Core.csproj" />
   </ItemGroup>
 </Project>

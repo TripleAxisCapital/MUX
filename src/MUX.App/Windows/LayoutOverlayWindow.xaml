@@ -1,0 +1,28 @@
+<Window x:Class="MUX.App.Windows.LayoutOverlayWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None" ResizeMode="NoResize" Background="#D90A0A0B"
+        ShowInTaskbar="False" Topmost="True">
+    <Grid>
+        <Canvas x:Name="ZoneCanvas" Background="Transparent" />
+
+        <Border HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,22,0,0"
+                Background="#F21A1A1D" BorderBrush="#3B3B42" BorderThickness="1"
+                CornerRadius="16" Padding="18,12">
+            <Border.Effect>
+                <DropShadowEffect Color="Black" BlurRadius="24" Opacity="0.35" ShadowDepth="6" />
+            </Border.Effect>
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <StackPanel Margin="0,0,22,0">
+                    <TextBlock Text="Edit layout" FontSize="14" FontWeight="SemiBold" />
+                    <TextBlock x:Name="DisplayLabel" Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,2,0,0" />
+                </StackPanel>
+                <Button Content="Cancel" Style="{StaticResource MuxButton}" Padding="14,7" Click="Cancel_Click" />
+                <Button Content="Save layout" Style="{StaticResource MuxPrimaryButton}" Padding="16,7" Margin="9,0,0,0" Click="Save_Click" />
+            </StackPanel>
+        </Border>
+
+        <TextBlock Text="Drag monitors anywhere on the display · physical sizes are shown at calibrated scale · Esc to cancel"
+                   Foreground="#777780" FontSize="12" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,26" />
+    </Grid>
+</Window>

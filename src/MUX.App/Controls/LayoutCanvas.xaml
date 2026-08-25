@@ -1,0 +1,9 @@
+<UserControl x:Class="MUX.App.Controls.LayoutCanvas"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="Transparent">
+    <Grid Background="Transparent">
+        <Canvas x:Name="HostCanvas" Background="Transparent" ClipToBounds="True" />
+        <Border IsHitTestVisible="False" Margin="18" CornerRadius="18" BorderBrush="#17FFFFFF" BorderThickness="1" />
+    </Grid>
+</UserControl>

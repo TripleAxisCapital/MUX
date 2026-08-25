@@ -1,0 +1,46 @@
+name: Build MUX
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  core-validation:
+    name: Core geometry validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Run deterministic geometry checks
+        run: dotnet run --project tests/MUX.Core.Tests/MUX.Core.Tests.csproj -c Release
+
+  windows-build:
+    name: Windows x64 build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Restore
+        run: dotnet restore MUX.sln
+      - name: Build
+        run: dotnet build src/MUX.App/MUX.App.csproj -c Release --no-restore
+      - name: Publish self-contained app
+        run: dotnet publish src/MUX.App/MUX.App.csproj -c Release -r win-x64 --self-contained true -o artifacts/MUX
+      - name: Package
+        shell: pwsh
+        run: Compress-Archive -Path artifacts/MUX/* -DestinationPath artifacts/MUX-win-x64.zip -CompressionLevel Optimal
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MUX-win-x64
+          path: artifacts/MUX-win-x64.zip
+          if-no-files-found: error

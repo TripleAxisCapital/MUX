@@ -1,0 +1,31 @@
+# .NET
+bin/
+obj/
+artifacts/
+TestResults/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# IDE
+.vs/
+.vscode/
+.idea/
+
+# Publish / installers
+publish/
+*.msix
+*.msixbundle
+*.appx
+*.appxbundle
+*.zip
+
+# Local MUX state
+state.json
+*.corrupt-*
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini

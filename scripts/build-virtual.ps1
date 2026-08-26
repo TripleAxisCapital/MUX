@@ -44,33 +44,36 @@ try {
     $wdkToolDirs = @()
 
     foreach ($toolName in $requiredWdkTools) {
-        $tool = Get-ChildItem -Path $wdkPackages -Recurse -File -Filter $toolName -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -match 'x64|amd64' } |
+        $candidates = Get-ChildItem -Path $wdkPackages -Recurse -File -Filter $toolName -ErrorAction SilentlyContinue
+
+        $tool = $candidates |
+            Where-Object { $_.Directory.Name -in @('x64', 'amd64') } |
             Select-Object -First 1
 
         if (-not $tool) {
-            $tool = Get-ChildItem -Path $wdkPackages -Recurse -File -Filter $toolName -ErrorAction SilentlyContinue |
+            $tool = $candidates |
+                Where-Object { $_.Directory.Name -eq 'x86' } |
                 Select-Object -First 1
         }
 
-        if ($tool) {
-            $wdkToolDirs += $tool.DirectoryName
-            Write-Host "Found WDK tool $toolName at $($tool.FullName)" -ForegroundColor DarkGray
+        if (-not $tool) {
+            throw "No x64/amd64/x86 host copy of $toolName was found in the restored WDK/SDK packages."
         }
+
+        $wdkToolDirs += $tool.DirectoryName
+        Write-Host "Found WDK tool $toolName at $($tool.FullName)" -ForegroundColor DarkGray
     }
 
     $wdkToolDirs = $wdkToolDirs | Sort-Object -Unique
-    if (-not $wdkToolDirs) {
-        throw 'No WDK native tool directories were found after restoring the WDK NuGet packages.'
-    }
-
     $env:PATH = (($wdkToolDirs -join ';') + ';' + $env:PATH)
 
-    if (-not (Get-Command stampinf.exe -ErrorAction SilentlyContinue)) {
-        throw 'stampinf.exe is still unavailable after configuring the WDK tool path.'
+    $stampInf = Get-Command stampinf.exe -ErrorAction Stop
+    if ($stampInf.Source -match 'ARM64') {
+        throw "Refusing to execute ARM64 stampinf.exe on the x64 build host: $($stampInf.Source)"
     }
 
     Write-Host "Building MUX IddCx virtual display driver with: $msbuild" -ForegroundColor Cyan
+    Write-Host "Using StampInf: $($stampInf.Source)" -ForegroundColor DarkGray
     & $msbuild $driverProject /m /p:Configuration=Release /p:Platform=x64
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE

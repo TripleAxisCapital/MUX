@@ -1,3 +1,4 @@
+# Prevent silent-launch regressions in the public MUX Virtual controller.
 name: MUX Virtual startup smoke
 
 on:

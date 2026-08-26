@@ -22,15 +22,28 @@ try {
         throw 'nuget.exe is required to restore the Windows Driver Kit packages.'
     }
 
-    if (-not (Get-Command msbuild -ErrorAction SilentlyContinue)) {
-        throw 'MSBuild with Visual Studio 2026 C++ build tools is required to build the MUX virtual display driver.'
-    }
-
     Write-Host 'Restoring Windows Driver Kit packages...' -ForegroundColor Cyan
     nuget restore .\driver\packages.config -PackagesDirectory .\driver\packages
 
-    Write-Host 'Building MUX IddCx virtual display driver...' -ForegroundColor Cyan
-    msbuild $driverProject /m /p:Configuration=Release /p:Platform=x64
+    $msbuild = Get-Command msbuild -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -First 1
+
+    if (-not $msbuild) {
+        $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+        if (Test-Path $vswhere) {
+            $msbuild = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe' |
+                Select-Object -First 1
+        }
+    }
+
+    if (-not $msbuild) {
+        throw 'MSBuild with Visual Studio C++ build tools could not be located.'
+    }
+
+    Write-Host "Building MUX IddCx virtual display driver with: $msbuild" -ForegroundColor Cyan
+    & $msbuild $driverProject /m /p:Configuration=Release /p:Platform=x64
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
 
     New-Item -ItemType Directory -Path $driverPublish -Force | Out-Null
 

@@ -89,7 +89,24 @@ jobs:
 
       - name: Build IddCx virtual display driver
         shell: pwsh
-        run: msbuild driver/MUX.Virtual.Display/MUX.Virtual.Display.vcxproj /m /p:Configuration=Release /p:Platform=x64
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio/Installer/vswhere.exe"
+          if (-not (Test-Path $vswhere)) {
+            throw "Visual Studio locator was not found on the runner."
+          }
+
+          $msbuild = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find "MSBuild/**/Bin/MSBuild.exe" |
+            Select-Object -First 1
+
+          if (-not $msbuild) {
+            throw "MSBuild could not be located on the Visual Studio 2026 runner."
+          }
+
+          Write-Host "Using MSBuild: $msbuild"
+          & $msbuild driver/MUX.Virtual.Display/MUX.Virtual.Display.vcxproj /m /p:Configuration=Release /p:Platform=x64
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
 
       - name: Assemble virtual-display package
         shell: pwsh

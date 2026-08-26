@@ -51,6 +51,20 @@ struct MonitorContextWrapper
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(DeviceContextWrapper, GetDeviceContextWrapper);
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(MonitorContextWrapper, GetMonitorContextWrapper);
 
+inline void MuxMonitorArrivalChecked(
+    IDDCX_MONITOR monitor,
+    IDARG_OUT_MONITORARRIVAL* arrival)
+{
+    const NTSTATUS status = IddCxMonitorArrival(monitor, arrival);
+    if (!NT_SUCCESS(status))
+    {
+        WdfObjectDelete(reinterpret_cast<WDFOBJECT>(monitor));
+    }
+}
+
+#define IddCxMonitorArrival(monitor, arrival) \
+    MuxMonitorArrivalChecked((monitor), (arrival))
+
 class Direct3DDevice
 {
 public:

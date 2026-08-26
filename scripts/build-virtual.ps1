@@ -25,18 +25,41 @@ try {
     Write-Host 'Restoring Windows Driver Kit packages...' -ForegroundColor Cyan
     nuget restore .\driver\packages.config -PackagesDirectory .\driver\packages
 
-    $msbuild = Get-Command msbuild -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -First 1
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+    if (-not (Test-Path $vswhere)) {
+        throw 'Visual Studio locator could not be found.'
+    }
 
-    if (-not $msbuild) {
-        $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-        if (Test-Path $vswhere) {
-            $msbuild = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe' |
-                Select-Object -First 1
+    $wdkComponentIds = @('Microsoft.Windows.DriverKit', 'Component.Microsoft.Windows.DriverKit.BuildTools')
+    $vsInstall = $null
+    foreach ($componentId in $wdkComponentIds) {
+        $candidate = & $vswhere -latest -products * -requires $componentId -property installationPath 2>$null |
+            Select-Object -First 1
+        if ($candidate) {
+            $vsInstall = $candidate
+            break
         }
     }
 
+    if (-not $vsInstall) {
+        throw 'Visual Studio with the Windows Driver Kit component could not be located.'
+    }
+
+    if (-not $env:VSCMD_VER) {
+        $devShellDll = Join-Path $vsInstall 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
+        if (-not (Test-Path $devShellDll)) {
+            throw "Visual Studio Developer Shell module could not be found at $devShellDll."
+        }
+
+        Import-Module $devShellDll
+        Enter-VsDevShell -VsInstallPath $vsInstall
+        Set-Location $root
+    }
+
+    $msbuild = Get-Command msbuild.exe -ErrorAction SilentlyContinue |
+        Select-Object -ExpandProperty Source -First 1
     if (-not $msbuild) {
-        throw 'MSBuild with Visual Studio C++ build tools could not be located.'
+        throw 'MSBuild is unavailable after entering the Visual Studio Developer Shell.'
     }
 
     $wdkPackages = Join-Path $root 'driver\packages'
@@ -72,11 +95,26 @@ try {
         throw "Refusing to execute ARM64 stampinf.exe on the x64 build host: $($stampInf.Source)"
     }
 
+    $wdkBinRoot = Split-Path $stampInf.Source -Parent | Split-Path -Parent
+    $infVerif = Join-Path $wdkBinRoot 'x86\InfVerif.dll'
+    if (-not (Test-Path $infVerif)) {
+        throw "InfVerif.dll was not found at the WDK-expected path: $infVerif"
+    }
+
     Write-Host "Building MUX IddCx virtual display driver with: $msbuild" -ForegroundColor Cyan
+    Write-Host "Using Visual Studio: $vsInstall" -ForegroundColor DarkGray
+    Write-Host "Using WDK bin root: $wdkBinRoot" -ForegroundColor DarkGray
     Write-Host "Using StampInf: $($stampInf.Source)" -ForegroundColor DarkGray
-    & $msbuild $driverProject /m /p:Configuration=Release /p:Platform=x64
-    if ($LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE
+
+    Push-Location $wdkBinRoot
+    try {
+        & $msbuild $driverProject /m /p:Configuration=Release /p:Platform=x64
+        if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+        }
+    }
+    finally {
+        Pop-Location
     }
 
     New-Item -ItemType Directory -Path $driverPublish -Force | Out-Null

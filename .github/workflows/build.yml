@@ -196,6 +196,37 @@ jobs:
             -DestinationPath artifacts/MUX-Virtual-win-x64.zip `
             -CompressionLevel Optimal
 
+      - name: Validate virtual-display package
+        shell: pwsh
+        run: |
+          $zip = Join-Path $PWD "artifacts/MUX-Virtual-win-x64.zip"
+          if (-not (Test-Path $zip)) {
+            throw "Virtual-display ZIP was not created."
+          }
+
+          $verifyRoot = Join-Path $env:RUNNER_TEMP "mux-virtual-package-check"
+          if (Test-Path $verifyRoot) {
+            Remove-Item $verifyRoot -Recurse -Force
+          }
+          Expand-Archive -Path $zip -DestinationPath $verifyRoot -Force
+
+          $required = @(
+            "MUX.Virtual.exe",
+            "Driver/MUXVirtualDisplay.dll",
+            "Driver/MUXVirtualDisplay.inf",
+            "Driver/MUXVirtualDisplay.cat",
+            "VIRTUAL-DISPLAYS.md"
+          )
+
+          foreach ($relativePath in $required) {
+            $candidate = Join-Path $verifyRoot $relativePath
+            if (-not (Test-Path $candidate)) {
+              throw "Virtual-display package is incomplete: missing $relativePath."
+            }
+          }
+
+          Write-Host "MUX Virtual package contains the controller, complete driver package, and setup documentation."
+
       - uses: actions/upload-artifact@v4
         with:
           name: MUX-Virtual-win-x64

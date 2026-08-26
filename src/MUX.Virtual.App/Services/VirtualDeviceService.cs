@@ -5,7 +5,10 @@ namespace MUX.Virtual.App.Services;
 public sealed class VirtualDeviceService : IDisposable
 {
     private const uint DevPropTypeBinary = 0x00001003;
-    private const uint Capabilities = 0x00000001 | 0x00000002 | 0x00000008;
+    private const uint CapabilityRemovable = 0x00000001;
+    private const uint CapabilitySilentInstall = 0x00000002;
+    private const uint CapabilityDriverRequired = 0x00000008;
+    private const uint Capabilities = CapabilityRemovable | CapabilitySilentInstall | CapabilityDriverRequired;
     private const string DeviceId = "MUXVirtualDisplay";
 
     private static readonly Guid ConfigPropertyGuid =
@@ -121,6 +124,61 @@ public sealed class VirtualDeviceService : IDisposable
         finally
         {
             unmanaged.Free();
+        }
+    }
+
+    /// <summary>
+    /// Control probe for the Windows Software Device API itself. Unlike the display probe,
+    /// this device has no hardware/compatible IDs and does not require a driver. If this
+    /// succeeds while the IddCx probe does not, the managed interop and SwDevice API path
+    /// are healthy and the remaining limitation is in the display-driver environment.
+    /// </summary>
+    public async Task CreateDriverIndependentApiProbeAsync(
+        CancellationToken cancellationToken = default)
+    {
+        const string probeId = "MUXSoftwareDeviceApiProbe";
+        DisposeHandle();
+        DeviceInstanceId = null;
+
+        var completion = CreateCompletionSource();
+        var instanceId = Marshal.StringToHGlobalUni(probeId);
+        var description = Marshal.StringToHGlobalUni("MUX Software Device API Probe");
+        try
+        {
+            var createInfo = new SwDeviceCreateInfo
+            {
+                cbSize = (uint)Marshal.SizeOf<SwDeviceCreateInfo>(),
+                pszInstanceId = instanceId,
+                pszzHardwareIds = IntPtr.Zero,
+                pszzCompatibleIds = IntPtr.Zero,
+                pContainerId = IntPtr.Zero,
+                CapabilityFlags = CapabilityRemovable | CapabilitySilentInstall,
+                pszDeviceDescription = description,
+                pszDeviceLocation = IntPtr.Zero,
+                pSecurityDescriptor = IntPtr.Zero
+            };
+
+            var hr = SwDeviceCreateBare(
+                probeId,
+                "HTREE\\ROOT\\0",
+                ref createInfo,
+                0,
+                IntPtr.Zero,
+                _callback!,
+                IntPtr.Zero,
+                out _handle);
+
+            await FinishCreationAsync(hr, completion, cancellationToken, "driver-independent Software Device API probe");
+        }
+        catch
+        {
+            DisposeHandle();
+            throw;
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(instanceId);
+            Marshal.FreeHGlobal(description);
         }
     }
 

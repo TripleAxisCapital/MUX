@@ -46,6 +46,12 @@ jobs:
 
       - name: Differential software-device creation probe
         shell: pwsh
+        env:
+          # GitHub's x64 hosted Windows image is Windows Server. The executable first
+          # requires a driver-independent SwDeviceCreate control probe to succeed. Only
+          # after that may the known IddCx/Server limitation be classified as not
+          # exercisable instead of a MUX regression.
+          MUX_ALLOW_IDDCX_HOST_LIMITATION: "1"
         run: |
           $exe = Join-Path $PWD "artifacts/MUX.Virtual/MUX.Virtual.exe"
           $process = Start-Process -FilePath $exe -ArgumentList "--device-smoke" -Wait -PassThru

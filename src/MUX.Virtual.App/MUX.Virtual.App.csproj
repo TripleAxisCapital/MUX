@@ -30,4 +30,13 @@
     <Resource Include="..\MUX.App\Assets\mux-logo.png" Link="Assets\mux-logo.png" />
     <ProjectReference Include="..\MUX.Core\MUX.Core.csproj" />
   </ItemGroup>
+
+  <Target Name="RemoveVirtualReleaseSymbols"
+          AfterTargets="Publish"
+          Condition="'$(Configuration)' == 'Release'">
+    <ItemGroup>
+      <VirtualPublishSymbols Include="$(PublishDir)**\*.pdb" />
+    </ItemGroup>
+    <Delete Files="@(VirtualPublishSymbols)" />
+  </Target>
 </Project>

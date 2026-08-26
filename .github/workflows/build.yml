@@ -6,8 +6,6 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
-  issues:
-    types: [opened]
 
 permissions:
   contents: read
@@ -15,7 +13,6 @@ permissions:
 jobs:
   core-validation:
     name: Core geometry validation
-    if: github.event_name != 'issues' || github.event.issue.title == '[MUX-CI] FINAL-VIRTUAL-VALIDATION-2026-08-26'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,7 +24,6 @@ jobs:
 
   windows-build:
     name: MUX Standard · Windows x64
-    if: github.event_name != 'issues' || github.event.issue.title == '[MUX-CI] FINAL-VIRTUAL-VALIDATION-2026-08-26'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -71,7 +67,6 @@ jobs:
 
   virtual-windows-build:
     name: MUX Virtual Displays · Windows x64
-    if: github.event_name != 'issues' || github.event.issue.title == '[MUX-CI] FINAL-VIRTUAL-VALIDATION-2026-08-26'
     runs-on: windows-2025-vs2026
     steps:
       - uses: actions/checkout@v4
@@ -240,7 +235,7 @@ jobs:
 
   publish-rolling-windows-downloads:
     name: Publish rolling Windows downloads
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'issues' && github.event.issue.title == '[MUX-CI] FINAL-VIRTUAL-VALIDATION-2026-08-26')
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs:
       - windows-build
       - virtual-windows-build
@@ -288,8 +283,3 @@ jobs:
               --notes "Two independent Windows downloads from main: MUX Standard (managed monitor regions) and MUX Virtual Displays (IddCx true virtual-monitor architecture). The Virtual driver package must be production-signed through Microsoft before frictionless retail installation." \
               --prerelease
           fi
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -f latest-build "$GITHUB_SHA"
-          git push origin refs/tags/latest-build --force

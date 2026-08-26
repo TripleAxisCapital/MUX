@@ -46,11 +46,21 @@ public partial class MainWindow
 
         if (_hotkeys is not null)
         {
-            _hotkeys.Register(5, System.Windows.Input.Key.F, () => _muxFullscreenService?.ToggleForeground());
+            _hotkeys.Register(5, System.Windows.Input.Key.F, ToggleMuxFullscreen);
             _hotkeys.Reload(_state.Shortcuts, out _);
         }
 
         RefreshShortcutSummary(_state.Shortcuts);
+    }
+
+    private void ToggleMuxFullscreen()
+    {
+        // Capture the browser before MUX changes its frame. The delayed F11 happens
+        // after Ctrl+Alt+F has been released, so Edge/Chrome enter their own true UI
+        // fullscreen while MUX continues to own and enforce the virtual-monitor bounds.
+        var browserWindow = BrowserNativeFullscreenBridge.CaptureSupportedForegroundWindow();
+        _muxFullscreenService?.ToggleForeground();
+        BrowserNativeFullscreenBridge.ToggleAfterShortcutRelease(browserWindow);
     }
 
     private void ApplyDropdownTheme()

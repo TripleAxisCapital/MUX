@@ -6,6 +6,8 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+  issues:
+    types: [opened]
 
 permissions:
   contents: read
@@ -13,6 +15,7 @@ permissions:
 jobs:
   core-validation:
     name: Core geometry validation
+    if: github.event_name != 'issues' || github.event.issue.title == '[MUX-CI] FINAL-VIRTUAL-VALIDATION-2026-08-26'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,6 +27,7 @@ jobs:
 
   windows-build:
     name: MUX Standard · Windows x64
+    if: github.event_name != 'issues' || github.event.issue.title == '[MUX-CI] FINAL-VIRTUAL-VALIDATION-2026-08-26'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -67,6 +71,7 @@ jobs:
 
   virtual-windows-build:
     name: MUX Virtual Displays · Windows x64
+    if: github.event_name != 'issues' || github.event.issue.title == '[MUX-CI] FINAL-VIRTUAL-VALIDATION-2026-08-26'
     runs-on: windows-2025-vs2026
     steps:
       - uses: actions/checkout@v4
@@ -235,7 +240,7 @@ jobs:
 
   publish-rolling-windows-downloads:
     name: Publish rolling Windows downloads
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'issues' && github.event.issue.title == '[MUX-CI] FINAL-VIRTUAL-VALIDATION-2026-08-26')
     needs:
       - windows-build
       - virtual-windows-build

@@ -10,6 +10,7 @@ public sealed class VirtualDeviceService : IDisposable
     private const uint CapabilityDriverRequired = 0x00000008;
     private const uint Capabilities = CapabilityRemovable | CapabilitySilentInstall | CapabilityDriverRequired;
     private const string DeviceId = "MUXVirtualDisplay";
+    private const string RootParentId = "HTREE\\ROOT\\0";
 
     private static readonly Guid ConfigPropertyGuid =
         new("4B3E5D11-7C2A-4A91-9F3E-58A9D1C72A10");
@@ -40,6 +41,7 @@ public sealed class VirtualDeviceService : IDisposable
         var unmanaged = AllocateCommonStrings(includeOptionalMetadata: true);
         var containerPtr = Marshal.AllocHGlobal(Marshal.SizeOf<Guid>());
         var configPtr = Marshal.AllocHGlobal(configBytes.Length);
+        var propertyPtr = Marshal.AllocHGlobal(Marshal.SizeOf<DevProperty>());
 
         try
         {
@@ -59,17 +61,9 @@ public sealed class VirtualDeviceService : IDisposable
                 BufferSize = (uint)configBytes.Length,
                 Buffer = configPtr
             };
+            Marshal.StructureToPtr(property, propertyPtr, false);
 
-            var hr = SwDeviceCreateConfigured(
-                DeviceId,
-                "HTREE\\ROOT\\0",
-                ref createInfo,
-                1,
-                ref property,
-                _callback!,
-                IntPtr.Zero,
-                out _handle);
-
+            var hr = InvokeRawSwDeviceCreate(DeviceId, RootParentId, createInfo, 1, propertyPtr);
             await FinishCreationAsync(hr, completion, cancellationToken, "configured MUX software device");
         }
         catch
@@ -82,6 +76,7 @@ public sealed class VirtualDeviceService : IDisposable
             unmanaged.Free();
             Marshal.FreeHGlobal(containerPtr);
             Marshal.FreeHGlobal(configPtr);
+            Marshal.FreeHGlobal(propertyPtr);
         }
     }
 
@@ -104,16 +99,7 @@ public sealed class VirtualDeviceService : IDisposable
             var createInfo = BuildCreateInfo(unmanaged, IntPtr.Zero);
             createInfo.pszDeviceLocation = IntPtr.Zero;
 
-            var hr = SwDeviceCreateBare(
-                DeviceId,
-                "HTREE\\ROOT\\0",
-                ref createInfo,
-                0,
-                IntPtr.Zero,
-                _callback!,
-                IntPtr.Zero,
-                out _handle);
-
+            var hr = InvokeRawSwDeviceCreate(DeviceId, RootParentId, createInfo, 0, IntPtr.Zero);
             await FinishCreationAsync(hr, completion, cancellationToken, "minimal Microsoft-sample-shape software device");
         }
         catch
@@ -129,9 +115,8 @@ public sealed class VirtualDeviceService : IDisposable
 
     /// <summary>
     /// Control probe for the Windows Software Device API itself. Unlike the display probe,
-    /// this device has no hardware/compatible IDs and does not require a driver. If this
-    /// succeeds while the IddCx probe does not, the managed interop and SwDevice API path
-    /// are healthy and the remaining limitation is in the display-driver environment.
+    /// this device has no hardware/compatible IDs and does not require a driver. CI compares
+    /// this call with a native C++ call using the same values.
     /// </summary>
     public async Task CreateDriverIndependentApiProbeAsync(
         CancellationToken cancellationToken = default)
@@ -158,16 +143,7 @@ public sealed class VirtualDeviceService : IDisposable
                 pSecurityDescriptor = IntPtr.Zero
             };
 
-            var hr = SwDeviceCreateBare(
-                probeId,
-                "HTREE\\ROOT\\0",
-                ref createInfo,
-                0,
-                IntPtr.Zero,
-                _callback!,
-                IntPtr.Zero,
-                out _handle);
-
+            var hr = InvokeRawSwDeviceCreate(probeId, RootParentId, createInfo, 0, IntPtr.Zero);
             await FinishCreationAsync(hr, completion, cancellationToken, "driver-independent Software Device API probe");
         }
         catch
@@ -179,6 +155,55 @@ public sealed class VirtualDeviceService : IDisposable
         {
             Marshal.FreeHGlobal(instanceId);
             Marshal.FreeHGlobal(description);
+        }
+    }
+
+    /// <summary>
+    /// Calls SwDeviceCreate through its literal unmanaged ABI instead of asking the CLR to
+    /// marshal a ref structure, callback delegate and out handle in one signature. Microsoft
+    /// exposes this API as raw pointers; keeping the boundary raw also makes our managed call
+    /// directly comparable with the native swdevice.lib control used by CI.
+    /// </summary>
+    private int InvokeRawSwDeviceCreate(
+        string enumerator,
+        string parent,
+        SwDeviceCreateInfo createInfo,
+        uint propertyCount,
+        IntPtr properties)
+    {
+        var enumeratorPtr = Marshal.StringToHGlobalUni(enumerator);
+        var parentPtr = Marshal.StringToHGlobalUni(parent);
+        var createInfoPtr = Marshal.AllocHGlobal(Marshal.SizeOf<SwDeviceCreateInfo>());
+        var handlePtr = Marshal.AllocHGlobal(IntPtr.Size);
+
+        try
+        {
+            Marshal.StructureToPtr(createInfo, createInfoPtr, false);
+            Marshal.WriteIntPtr(handlePtr, IntPtr.Zero);
+
+            var callbackPtr = Marshal.GetFunctionPointerForDelegate(_callback
+                ?? throw new InvalidOperationException("Software-device callback was not initialized."));
+
+            var hr = SwDeviceCreateRaw(
+                enumeratorPtr,
+                parentPtr,
+                createInfoPtr,
+                propertyCount,
+                properties,
+                callbackPtr,
+                IntPtr.Zero,
+                handlePtr);
+
+            _handle = Marshal.ReadIntPtr(handlePtr);
+            GC.KeepAlive(_callback);
+            return hr;
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(enumeratorPtr);
+            Marshal.FreeHGlobal(parentPtr);
+            Marshal.FreeHGlobal(createInfoPtr);
+            Marshal.FreeHGlobal(handlePtr);
         }
     }
 
@@ -341,28 +366,17 @@ public sealed class VirtualDeviceService : IDisposable
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     private delegate void SwDeviceCreateCallback(IntPtr hSwDevice, int createResult, IntPtr context, IntPtr deviceInstanceId);
 
-    [DllImport("Cfgmgr32.dll", EntryPoint = "SwDeviceCreate", CharSet = CharSet.Unicode)]
-    private static extern int SwDeviceCreateConfigured(
-        string pszEnumeratorName,
-        string pszParentDeviceInstance,
-        ref SwDeviceCreateInfo pCreateInfo,
-        uint cPropertyCount,
-        ref DevProperty pProperties,
-        SwDeviceCreateCallback pCallback,
-        IntPtr pContext,
-        out IntPtr phSwDevice);
-
-    [DllImport("Cfgmgr32.dll", EntryPoint = "SwDeviceCreate", CharSet = CharSet.Unicode)]
-    private static extern int SwDeviceCreateBare(
-        string pszEnumeratorName,
-        string pszParentDeviceInstance,
-        ref SwDeviceCreateInfo pCreateInfo,
+    [DllImport("Cfgmgr32.dll", EntryPoint = "SwDeviceCreate", ExactSpelling = true)]
+    private static extern int SwDeviceCreateRaw(
+        IntPtr pszEnumeratorName,
+        IntPtr pszParentDeviceInstance,
+        IntPtr pCreateInfo,
         uint cPropertyCount,
         IntPtr pProperties,
-        SwDeviceCreateCallback pCallback,
+        IntPtr pCallback,
         IntPtr pContext,
-        out IntPtr phSwDevice);
+        IntPtr phSwDevice);
 
-    [DllImport("Cfgmgr32.dll")]
+    [DllImport("Cfgmgr32.dll", EntryPoint = "SwDeviceClose", ExactSpelling = true)]
     private static extern void SwDeviceClose(IntPtr hSwDevice);
 }

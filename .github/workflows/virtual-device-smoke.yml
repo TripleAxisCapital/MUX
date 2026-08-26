@@ -73,10 +73,6 @@ jobs:
       - name: Differential software-device creation probe
         shell: pwsh
         env:
-          # GitHub's hosted x64 Windows image is Windows Server. The executable probes
-          # the generic Software Device API before IddCx. The workflow only classifies
-          # ERROR_MOD_NOT_FOUND as a host limitation when the native Microsoft ABI call
-          # returns the exact same HRESULT as our managed interop on the same machine.
           MUX_ALLOW_IDDCX_HOST_LIMITATION: "1"
         run: |
           $exe = Join-Path $PWD "artifacts/MUX.Virtual/MUX.Virtual.exe"
@@ -95,7 +91,10 @@ jobs:
           }
 
           $nativePath = Join-Path $env:RUNNER_TEMP "mux-native-swdevice-result.txt"
-          $nativeText = Test-Path $nativePath ? (Get-Content $nativePath -Raw) : ""
+          $nativeText = ""
+          if (Test-Path $nativePath) {
+            $nativeText = Get-Content $nativePath -Raw
+          }
 
           $managedHostLimitation =
             $process.ExitCode -eq 34 -and

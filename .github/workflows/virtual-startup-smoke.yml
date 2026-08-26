@@ -1,0 +1,108 @@
+name: MUX Virtual startup smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/MUX.Virtual.App/**"
+      - "src/MUX.Core/**"
+      - ".github/workflows/virtual-startup-smoke.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/MUX.Virtual.App/**"
+      - "src/MUX.Core/**"
+      - ".github/workflows/virtual-startup-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  startup-smoke:
+    name: MUX Virtual controller launch · Windows x64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore src/MUX.Virtual.App/MUX.Virtual.App.csproj
+
+      - name: Publish transparent self-contained controller
+        run: dotnet publish src/MUX.Virtual.App/MUX.Virtual.App.csproj -c Release -r win-x64 --self-contained true -o artifacts/MUX.Virtual
+
+      - name: Validate publish layout
+        shell: pwsh
+        run: |
+          $root = Join-Path $PWD "artifacts/MUX.Virtual"
+          $required = @(
+            "MUX.Virtual.exe",
+            "MUX.Virtual.dll",
+            "MUX.Virtual.deps.json",
+            "MUX.Virtual.runtimeconfig.json"
+          )
+
+          foreach ($name in $required) {
+            $path = Join-Path $root $name
+            if (-not (Test-Path $path)) {
+              throw "Virtual controller publish is missing $name."
+            }
+          }
+
+          $exe = Get-Item (Join-Path $root "MUX.Virtual.exe")
+          if ($exe.Length -gt 20MB) {
+            throw "MUX.Virtual.exe is unexpectedly large ($($exe.Length) bytes). The controller appears to have regressed to a single-file/self-extracting publish."
+          }
+
+          $pdbs = @(Get-ChildItem $root -Recurse -Filter *.pdb -ErrorAction SilentlyContinue)
+          if ($pdbs.Count -gt 0) {
+            throw "Release publish contains debugging PDB files: $($pdbs.FullName -join ', ')"
+          }
+
+          Write-Host "Transparent multi-file controller publish validated."
+
+      - name: Launch smoke test
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD "artifacts/MUX.Virtual/MUX.Virtual.exe"
+          $logRoot = Join-Path $env:LOCALAPPDATA "MUX/Virtual"
+          $startupLog = Join-Path $logRoot "startup.log"
+          $errorLog = Join-Path $logRoot "startup-error.log"
+
+          Remove-Item $startupLog -Force -ErrorAction SilentlyContinue
+          Remove-Item $errorLog -Force -ErrorAction SilentlyContinue
+
+          $process = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 7
+          $process.Refresh()
+
+          if ($process.HasExited) {
+            if (Test-Path $startupLog) {
+              Write-Host "--- MUX Virtual startup.log ---"
+              Get-Content $startupLog
+            }
+            if (Test-Path $errorLog) {
+              Write-Host "--- MUX Virtual startup-error.log ---"
+              Get-Content $errorLog
+            }
+            throw "MUX Virtual exited during startup smoke testing with exit code $($process.ExitCode)."
+          }
+
+          if (-not (Test-Path $startupLog)) {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            throw "MUX Virtual remained running but did not create its startup diagnostic log."
+          }
+
+          $startup = Get-Content $startupLog -Raw
+          if ($startup -notmatch "Main window shown") {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            Write-Host $startup
+            throw "MUX Virtual process stayed alive but did not confirm that the main window was shown."
+          }
+
+          Stop-Process -Id $process.Id -Force
+          Write-Host "MUX Virtual launched and showed its main window successfully."

@@ -8,6 +8,11 @@ TestResults/
 *.userosscache
 *.sln.docstates
 
+# Native driver restore/build
+driver/packages/
+*.tlog
+*.lastbuildstate
+
 # IDE
 .vs/
 .vscode/

@@ -6,6 +6,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MUX.Core", "src\MUX.Core\MU
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MUX.App", "src\MUX.App\MUX.App.csproj", "{9E88C38D-79EC-4A25-B64A-C6D4D65F06AF}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MUX.Virtual.App", "src\MUX.Virtual.App\MUX.Virtual.App.csproj", "{1A147F27-3D79-4B8F-B516-EFE41A3D1E0A}"
+EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MUX.Core.Tests", "tests\MUX.Core.Tests\MUX.Core.Tests.csproj", "{B3F2034C-B318-47E2-AC71-239505D474B5}"
 EndProject
 Global
@@ -22,6 +24,10 @@ Global
         {9E88C38D-79EC-4A25-B64A-C6D4D65F06AF}.Debug|Any CPU.Build.0 = Debug|Any CPU
         {9E88C38D-79EC-4A25-B64A-C6D4D65F06AF}.Release|Any CPU.ActiveCfg = Release|Any CPU
         {9E88C38D-79EC-4A25-B64A-C6D4D65F06AF}.Release|Any CPU.Build.0 = Release|Any CPU
+        {1A147F27-3D79-4B8F-B516-EFE41A3D1E0A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+        {1A147F27-3D79-4B8F-B516-EFE41A3D1E0A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+        {1A147F27-3D79-4B8F-B516-EFE41A3D1E0A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+        {1A147F27-3D79-4B8F-B516-EFE41A3D1E0A}.Release|Any CPU.Build.0 = Release|Any CPU
         {B3F2034C-B318-47E2-AC71-239505D474B5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
         {B3F2034C-B318-47E2-AC71-239505D474B5}.Debug|Any CPU.Build.0 = Debug|Any CPU
         {B3F2034C-B318-47E2-AC71-239505D474B5}.Release|Any CPU.ActiveCfg = Release|Any CPU

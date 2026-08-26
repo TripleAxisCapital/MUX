@@ -23,10 +23,8 @@ jobs:
         run: dotnet run --project tests/MUX.Core.Tests/MUX.Core.Tests.csproj -c Release
 
   windows-build:
-    name: Windows x64 build
+    name: MUX Standard · Windows x64
     runs-on: windows-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -66,23 +64,117 @@ jobs:
           name: MUX-win-x64
           path: artifacts/MUX-win-x64.zip
           if-no-files-found: error
-      - name: Publish rolling Windows download
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+  virtual-windows-build:
+    name: MUX Virtual Displays · Windows x64
+    runs-on: windows-2025-vs2026
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore virtual controller
+        run: dotnet restore src/MUX.Virtual.App/MUX.Virtual.App.csproj
+
+      - name: Build virtual controller
+        run: dotnet build src/MUX.Virtual.App/MUX.Virtual.App.csproj -c Release --no-restore
+
+      - name: Publish virtual controller
+        run: dotnet publish src/MUX.Virtual.App/MUX.Virtual.App.csproj -c Release -r win-x64 --self-contained true -o artifacts/MUX.Virtual
+
+      - name: Restore WDK packages
         shell: pwsh
+        run: nuget restore driver/packages.config -PackagesDirectory driver/packages
+
+      - name: Build IddCx virtual display driver
+        shell: pwsh
+        run: msbuild driver/MUX.Virtual.Display/MUX.Virtual.Display.vcxproj /m /p:Configuration=Release /p:Platform=x64
+
+      - name: Assemble virtual-display package
+        shell: pwsh
+        run: |
+          $buildRoot = Join-Path $PWD "driver/MUX.Virtual.Display/bin/x64/Release"
+          $driverOut = Join-Path $PWD "artifacts/MUX.Virtual/Driver"
+          New-Item -ItemType Directory -Path $driverOut -Force | Out-Null
+
+          foreach ($name in @("MUXVirtualDisplay.dll", "MUXVirtualDisplay.inf", "MUXVirtualDisplay.cat")) {
+            $candidate = Get-ChildItem $buildRoot -Recurse -Filter $name |
+              Sort-Object LastWriteTime -Descending |
+              Select-Object -First 1
+
+            if (-not $candidate) {
+              throw "Driver build did not produce $name."
+            }
+
+            Copy-Item $candidate.FullName (Join-Path $driverOut $name) -Force
+          }
+
+          Copy-Item "docs/VIRTUAL-DISPLAYS.md" "artifacts/MUX.Virtual/VIRTUAL-DISPLAYS.md" -Force
+
+          Compress-Archive `
+            -Path artifacts/MUX.Virtual/* `
+            -DestinationPath artifacts/MUX-Virtual-win-x64.zip `
+            -CompressionLevel Optimal
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MUX-Virtual-win-x64
+          path: artifacts/MUX-Virtual-win-x64.zip
+          if-no-files-found: error
+
+  publish-rolling-windows-downloads:
+    name: Publish rolling Windows downloads
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs:
+      - windows-build
+      - virtual-windows-build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: MUX-win-x64
+          path: release-assets
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: MUX-Virtual-win-x64
+          path: release-assets
+
+      - name: Publish rolling release
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view latest-build --repo "$env:GITHUB_REPOSITORY" *> $null
-          $releaseExists = $LASTEXITCODE -eq 0
+          set -euo pipefail
 
-          if ($releaseExists) {
-            gh release upload latest-build artifacts/MUX-win-x64.zip --repo "$env:GITHUB_REPOSITORY" --clobber
-            gh release edit latest-build --repo "$env:GITHUB_REPOSITORY" --title "MUX Latest Windows Build" --notes "Latest validated MUX Windows x64 build from main."
-          } else {
-            gh release create latest-build artifacts/MUX-win-x64.zip --repo "$env:GITHUB_REPOSITORY" --target "$env:GITHUB_SHA" --title "MUX Latest Windows Build" --notes "Latest validated MUX Windows x64 build from main." --prerelease
-          }
+          if gh release view latest-build --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload latest-build \
+              release-assets/MUX-win-x64.zip \
+              release-assets/MUX-Virtual-win-x64.zip \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+
+            gh release edit latest-build \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "MUX Latest Windows Builds" \
+              --notes "Two independent Windows downloads from main: MUX Standard (managed monitor regions) and MUX Virtual Displays (IddCx true virtual-monitor architecture). The Virtual driver package must be production-signed through Microsoft before frictionless retail installation."
+          else
+            gh release create latest-build \
+              release-assets/MUX-win-x64.zip \
+              release-assets/MUX-Virtual-win-x64.zip \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "MUX Latest Windows Builds" \
+              --notes "Two independent Windows downloads from main: MUX Standard (managed monitor regions) and MUX Virtual Displays (IddCx true virtual-monitor architecture). The Virtual driver package must be production-signed through Microsoft before frictionless retail installation." \
+              --prerelease
+          fi
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -f latest-build "$env:GITHUB_SHA"
+          git tag -f latest-build "$GITHUB_SHA"
           git push origin refs/tags/latest-build --force

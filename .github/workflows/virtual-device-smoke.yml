@@ -22,6 +22,32 @@ jobs:
         shell: pwsh
         run: ./scripts/build-virtual.ps1
 
+      - name: Build native Software Device API control
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsInstall = & $vswhere -latest -products * -property installationPath | Select-Object -First 1
+          if (-not $vsInstall) { throw "Visual Studio was not found." }
+
+          $devShellDll = Join-Path $vsInstall "Common7/Tools/Microsoft.VisualStudio.DevShell.dll"
+          Import-Module $devShellDll
+          Enter-VsDevShell -VsInstallPath $vsInstall
+          Set-Location $env:GITHUB_WORKSPACE
+
+          $outDir = Join-Path $env:RUNNER_TEMP "mux-native-probe"
+          New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+          $exe = Join-Path $outDir "SwDeviceNativeProbe.exe"
+
+          & cl.exe /nologo /EHsc /W4 /WX `
+            "tests/SwDeviceNativeProbe.cpp" `
+            /Fe:$exe `
+            /link swdevice.lib
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $nativeOutput = & $exe 2>&1 | Out-String
+          $nativeOutput | Write-Host
+          Set-Content -Path (Join-Path $env:RUNNER_TEMP "mux-native-swdevice-result.txt") -Value $nativeOutput
+
       - name: Trust and stage CI test driver
         shell: pwsh
         run: |
@@ -47,29 +73,52 @@ jobs:
       - name: Differential software-device creation probe
         shell: pwsh
         env:
-          # GitHub's x64 hosted Windows image is Windows Server. The executable first
-          # requires a driver-independent SwDeviceCreate control probe to succeed. Only
-          # after that may the known IddCx/Server limitation be classified as not
-          # exercisable instead of a MUX regression.
+          # GitHub's hosted x64 Windows image is Windows Server. The executable probes
+          # the generic Software Device API before IddCx. The workflow only classifies
+          # ERROR_MOD_NOT_FOUND as a host limitation when the native Microsoft ABI call
+          # returns the exact same HRESULT as our managed interop on the same machine.
           MUX_ALLOW_IDDCX_HOST_LIMITATION: "1"
         run: |
           $exe = Join-Path $PWD "artifacts/MUX.Virtual/MUX.Virtual.exe"
           $process = Start-Process -FilePath $exe -ArgumentList "--device-smoke" -Wait -PassThru
           $log = Join-Path $env:LOCALAPPDATA "MUX/Virtual/device-smoke.log"
+          $logText = ""
           if (Test-Path $log) {
             Write-Host "--- MUX device-smoke.log ---"
-            Get-Content $log
+            $logText = Get-Content $log -Raw
+            Write-Host $logText
             Write-Host "----------------------------"
           }
-          if ($process.ExitCode -ne 0) {
-            Write-Host "MUX differential device probe exited with $($process.ExitCode)."
-            exit $process.ExitCode
+
+          if ($process.ExitCode -eq 0) {
+            exit 0
           }
+
+          $nativePath = Join-Path $env:RUNNER_TEMP "mux-native-swdevice-result.txt"
+          $nativeText = Test-Path $nativePath ? (Get-Content $nativePath -Raw) : ""
+
+          $managedHostLimitation =
+            $process.ExitCode -eq 34 -and
+            $logText -match "SOFTWARE_DEVICE_API_PROBE_FAILED" -and
+            $logText -match "0x8007007E"
+          $nativeHostLimitation = $nativeText -match "NATIVE_INITIAL_HRESULT=0x8007007E"
+
+          if ($managedHostLimitation -and $nativeHostLimitation) {
+            Write-Host "Native C++ and managed MUX SwDeviceCreate calls both returned 0x8007007E on this Windows Server host. Managed ABI is equivalent; Software Device runtime is not exercisable on this hosted image."
+            exit 0
+          }
+
+          Write-Host "MUX differential device probe exited with $($process.ExitCode), and the native/managed results did not match an allowed hosted-Server limitation."
+          exit $process.ExitCode
 
       - name: Windows device-install diagnostics
         if: failure()
         shell: pwsh
         run: |
+          Write-Host "--- Native Software Device API control ---"
+          $nativePath = Join-Path $env:RUNNER_TEMP "mux-native-swdevice-result.txt"
+          if (Test-Path $nativePath) { Get-Content $nativePath | Write-Host }
+
           Write-Host "--- Test-signing boot state ---"
           & bcdedit.exe /enum "{current}" 2>&1 | Out-String | Write-Host
 

@@ -95,18 +95,41 @@ try {
         throw "Refusing to execute ARM64 stampinf.exe on the x64 build host: $($stampInf.Source)"
     }
 
-    $wdkBinRoot = Split-Path $stampInf.Source -Parent | Split-Path -Parent
-    $infVerif = Join-Path $wdkBinRoot 'x86\InfVerif.dll'
-    if (-not (Test-Path $infVerif)) {
-        throw "InfVerif.dll was not found at the WDK-expected path: $infVerif"
+    $nugetWdkBinRoot = Split-Path $stampInf.Source -Parent | Split-Path -Parent
+    $wdkVersion = Split-Path $nugetWdkBinRoot -Leaf
+    $windowsKitsBin = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin'
+    if (-not (Test-Path $windowsKitsBin)) {
+        throw "Installed Windows Kits bin directory was not found at $windowsKitsBin."
     }
+
+    $installedInfVerif = Get-ChildItem -Path $windowsKitsBin -Recurse -File -Filter InfVerif.dll -ErrorAction SilentlyContinue |
+        Where-Object { $_.Directory.Name -eq 'x86' -and $_.FullName -match [regex]::Escape($wdkVersion) } |
+        Select-Object -First 1
+
+    if (-not $installedInfVerif) {
+        $installedInfVerif = Get-ChildItem -Path $windowsKitsBin -Recurse -File -Filter InfVerif.dll -ErrorAction SilentlyContinue |
+            Where-Object { $_.Directory.Name -eq 'x86' } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+    }
+
+    if (-not $installedInfVerif) {
+        throw 'No installed x86 InfVerif.dll could be found in the Windows Kits tree.'
+    }
+
+    $installedWdkBinRoot = Split-Path $installedInfVerif.DirectoryName -Parent
+    $installedWdkX86 = Join-Path $installedWdkBinRoot 'x86'
+    $installedWdkX64 = Join-Path $installedWdkBinRoot 'x64'
+    $env:PATH = "$installedWdkX86;$installedWdkX64;$env:PATH"
 
     Write-Host "Building MUX IddCx virtual display driver with: $msbuild" -ForegroundColor Cyan
     Write-Host "Using Visual Studio: $vsInstall" -ForegroundColor DarkGray
-    Write-Host "Using WDK bin root: $wdkBinRoot" -ForegroundColor DarkGray
+    Write-Host "Using NuGet WDK: $wdkVersion" -ForegroundColor DarkGray
+    Write-Host "Using installed WDK verifier root: $installedWdkBinRoot" -ForegroundColor DarkGray
+    Write-Host "Using InfVerif: $($installedInfVerif.FullName)" -ForegroundColor DarkGray
     Write-Host "Using StampInf: $($stampInf.Source)" -ForegroundColor DarkGray
 
-    Push-Location $wdkBinRoot
+    Push-Location $installedWdkBinRoot
     try {
         & $msbuild $driverProject /m /p:Configuration=Release /p:Platform=x64
         if ($LASTEXITCODE -ne 0) {

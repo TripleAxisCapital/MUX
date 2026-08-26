@@ -122,6 +122,8 @@ Driver/
 VIRTUAL-DISPLAYS.md
 ```
 
+GitHub Actions also expands the finished ZIP before publishing and fails the build unless the controller executable, driver DLL, INF, catalog, and setup documentation are all present. This makes the rolling download a validated complete package rather than merely a successful compilation artifact.
+
 ## Driver signing
 
 The repository can compile and package the driver in CI. A public retail Windows build still requires the completed driver package to be submitted through Microsoft's Hardware/Partner Center signing process.

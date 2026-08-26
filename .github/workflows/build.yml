@@ -90,19 +90,43 @@ jobs:
       - name: Build IddCx virtual display driver
         shell: pwsh
         run: |
+          $repoRoot = $PWD.Path
+          $driverProject = Join-Path $repoRoot "driver/MUX.Virtual.Display/MUX.Virtual.Display.vcxproj"
           $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio/Installer/vswhere.exe"
           if (-not (Test-Path $vswhere)) {
             throw "Visual Studio locator was not found on the runner."
           }
 
-          $msbuild = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find "MSBuild/**/Bin/MSBuild.exe" |
-            Select-Object -First 1
-
-          if (-not $msbuild) {
-            throw "MSBuild could not be located on the Visual Studio 2026 runner."
+          $wdkComponentIds = @("Microsoft.Windows.DriverKit", "Component.Microsoft.Windows.DriverKit.BuildTools")
+          $vsInstall = $null
+          foreach ($componentId in $wdkComponentIds) {
+            $candidate = & $vswhere -latest -products * -requires $componentId -property installationPath 2>$null |
+              Select-Object -First 1
+            if ($candidate) {
+              $vsInstall = $candidate
+              break
+            }
           }
 
-          $wdkPackages = Join-Path $PWD "driver/packages"
+          if (-not $vsInstall) {
+            throw "No Visual Studio installation with the Windows Driver Kit component was found."
+          }
+
+          $devShellDll = Join-Path $vsInstall "Common7/Tools/Microsoft.VisualStudio.DevShell.dll"
+          if (-not (Test-Path $devShellDll)) {
+            throw "Visual Studio Developer Shell module was not found at $devShellDll."
+          }
+
+          Import-Module $devShellDll
+          Enter-VsDevShell -VsInstallPath $vsInstall
+          Set-Location $repoRoot
+
+          $msbuild = Get-Command msbuild.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -First 1
+          if (-not $msbuild) {
+            throw "MSBuild is unavailable after entering the Visual Studio Developer Shell."
+          }
+
+          $wdkPackages = Join-Path $repoRoot "driver/packages"
           $requiredWdkTools = @("stampinf.exe", "inf2cat.exe", "signtool.exe", "tracewpp.exe")
           $wdkToolDirs = @()
 
@@ -135,11 +159,26 @@ jobs:
             throw "Refusing to execute ARM64 stampinf.exe on the x64 build runner: $($stampInf.Source)"
           }
 
+          $wdkBinRoot = Split-Path $stampInf.Source -Parent | Split-Path -Parent
+          $infVerif = Join-Path $wdkBinRoot "x86/InfVerif.dll"
+          if (-not (Test-Path $infVerif)) {
+            throw "InfVerif.dll was not found at the WDK-expected path: $infVerif"
+          }
+
+          Write-Host "Using Visual Studio: $vsInstall"
           Write-Host "Using MSBuild: $msbuild"
+          Write-Host "Using WDK bin root: $wdkBinRoot"
           Write-Host "Using StampInf: $($stampInf.Source)"
-          & $msbuild driver/MUX.Virtual.Display/MUX.Virtual.Display.vcxproj /m /p:Configuration=Release /p:Platform=x64
-          if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
+
+          Push-Location $wdkBinRoot
+          try {
+            & $msbuild $driverProject /m /p:Configuration=Release /p:Platform=x64
+            if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+            }
+          }
+          finally {
+            Pop-Location
           }
 
       - name: Assemble virtual-display package

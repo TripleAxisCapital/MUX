@@ -87,11 +87,13 @@ jobs:
         shell: pwsh
         run: nuget restore driver/packages.config -PackagesDirectory driver/packages
 
-      - name: Build IddCx virtual display driver
+      - name: Build native bridge and IddCx virtual display driver
         shell: pwsh
         run: |
           $repoRoot = $PWD.Path
           $driverProject = Join-Path $repoRoot "driver/MUX.Virtual.Display/MUX.Virtual.Display.vcxproj"
+          $bridgeSource = Join-Path $repoRoot "native/MUX.SwDeviceBridge.cpp"
+          $bridgeOutput = Join-Path $repoRoot "artifacts/MUX.Virtual/MUX.SwDeviceBridge.dll"
           $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio/Installer/vswhere.exe"
           if (-not (Test-Path $vswhere)) {
             throw "Visual Studio locator was not found on the runner."
@@ -118,8 +120,26 @@ jobs:
           }
 
           Import-Module $devShellDll
-          Enter-VsDevShell -VsInstallPath $vsInstall
+          Enter-VsDevShell -VsInstallPath $vsInstall -DevCmdArguments '-arch=x64 -host_arch=x64'
           Set-Location $repoRoot
+
+          $nativeCl = Join-Path $env:VCToolsInstallDir "bin/Hostx64/x64/cl.exe"
+          if (-not (Test-Path $nativeCl)) {
+            throw "x64 C++ compiler was not found at $nativeCl."
+          }
+          if (-not (Test-Path $bridgeSource)) {
+            throw "Software Device native bridge source was not found at $bridgeSource."
+          }
+
+          Write-Host "Building native Software Device bridge with: $nativeCl"
+          & $nativeCl /nologo /LD /EHsc /W4 /WX /MT /DUNICODE /D_UNICODE `
+            $bridgeSource /Fe:$bridgeOutput /link swdevice.lib
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+          if (-not (Test-Path $bridgeOutput)) {
+            throw "Native Software Device bridge did not produce MUX.SwDeviceBridge.dll."
+          }
 
           # WDK 28000 x64 builds must use the 64-bit MSBuild host. The 32-bit host
           # causes DPVerifier/InfVerif and PREfast to look for incompatible x86 host DLLs.
@@ -224,6 +244,7 @@ jobs:
 
           $required = @(
             "MUX.Virtual.exe",
+            "MUX.SwDeviceBridge.dll",
             "Driver/MUXVirtualDisplay.dll",
             "Driver/MUXVirtualDisplay.inf",
             "Driver/MUXVirtualDisplay.cat",
@@ -244,7 +265,7 @@ jobs:
             throw "The public release must never contain a private signing key."
           }
 
-          Write-Host "MUX Virtual package contains the controller, complete driver package, public test certificate, and setup documentation."
+          Write-Host "MUX Virtual package contains the controller, native Software Device bridge, complete driver package, public test certificate, and setup documentation."
 
       - uses: actions/upload-artifact@v4
         with:
@@ -291,7 +312,7 @@ jobs:
             gh release edit latest-build \
               --repo "$GITHUB_REPOSITORY" \
               --title "MUX Latest Windows Builds" \
-              --notes "Two independent Windows downloads from main: MUX Standard (managed monitor regions) and MUX Virtual Displays (IddCx true virtual-monitor architecture). The rolling Virtual build is test-signed for development and includes only the public test certificate needed for explicit local trust. Retail distribution still requires Microsoft production driver signing."
+              --notes "Two independent Windows downloads from main: MUX Standard (managed monitor regions) and MUX Virtual Displays (IddCx true virtual-monitor architecture). The rolling Virtual build is test-signed for development, includes the native Software Device bridge, and includes only the public test certificate needed for explicit local trust. Retail distribution still requires Microsoft production driver signing."
           else
             gh release create latest-build \
               release-assets/MUX-win-x64.zip \
@@ -299,6 +320,6 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --title "MUX Latest Windows Builds" \
-              --notes "Two independent Windows downloads from main: MUX Standard (managed monitor regions) and MUX Virtual Displays (IddCx true virtual-monitor architecture). The rolling Virtual build is test-signed for development and includes only the public test certificate needed for explicit local trust. Retail distribution still requires Microsoft production driver signing." \
+              --notes "Two independent Windows downloads from main: MUX Standard (managed monitor regions) and MUX Virtual Displays (IddCx true virtual-monitor architecture). The rolling Virtual build is test-signed for development, includes the native Software Device bridge, and includes only the public test certificate needed for explicit local trust. Retail distribution still requires Microsoft production driver signing." \
               --prerelease
           fi

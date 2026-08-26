@@ -4,6 +4,8 @@ $appPublish = Join-Path $root 'artifacts\MUX.Virtual'
 $driverProject = Join-Path $root 'driver\MUX.Virtual.Display\MUX.Virtual.Display.vcxproj'
 $driverBuildRoot = Join-Path $root 'driver\MUX.Virtual.Display\bin\x64\Release'
 $driverPublish = Join-Path $appPublish 'Driver'
+$bridgeSource = Join-Path $root 'native\MUX.SwDeviceBridge.cpp'
+$bridgeOutput = Join-Path $appPublish 'MUX.SwDeviceBridge.dll'
 
 Push-Location $root
 try {
@@ -52,7 +54,7 @@ try {
         }
 
         Import-Module $devShellDll
-        Enter-VsDevShell -VsInstallPath $vsInstall
+        Enter-VsDevShell -VsInstallPath $vsInstall -DevCmdArguments '-arch=x64 -host_arch=x64'
         Set-Location $root
     }
 
@@ -61,6 +63,24 @@ try {
     $msbuild = Join-Path $vsInstall 'MSBuild\Current\Bin\amd64\MSBuild.exe'
     if (-not (Test-Path $msbuild)) {
         throw "64-bit MSBuild could not be found at $msbuild."
+    }
+
+    $nativeCl = Join-Path $env:VCToolsInstallDir 'bin\Hostx64\x64\cl.exe'
+    if (-not (Test-Path $nativeCl)) {
+        throw "x64 C++ compiler could not be found at $nativeCl."
+    }
+    if (-not (Test-Path $bridgeSource)) {
+        throw "Software Device native bridge source could not be found at $bridgeSource."
+    }
+
+    Write-Host 'Building native Software Device bridge...' -ForegroundColor Cyan
+    & $nativeCl /nologo /LD /EHsc /W4 /WX /MT /DUNICODE /D_UNICODE `
+        $bridgeSource /Fe:$bridgeOutput /link swdevice.lib
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+    if (-not (Test-Path $bridgeOutput)) {
+        throw 'Native Software Device bridge did not produce MUX.SwDeviceBridge.dll.'
     }
 
     $wdkPackages = Join-Path $root 'driver\packages'

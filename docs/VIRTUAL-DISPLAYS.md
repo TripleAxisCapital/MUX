@@ -119,18 +119,25 @@ Driver/
   MUXVirtualDisplay.inf
   MUXVirtualDisplay.dll
   MUXVirtualDisplay.cat
+  MUXVirtualDisplay-TestCertificate.cer
 VIRTUAL-DISPLAYS.md
 ```
 
-GitHub Actions also expands the finished ZIP before publishing and fails the build unless the controller executable, driver DLL, INF, catalog, and setup documentation are all present. This makes the rolling download a validated complete package rather than merely a successful compilation artifact.
+`MUXVirtualDisplay-TestCertificate.cer` contains only the public certificate from the test signer used for that build. The private signing key is never included in the package. GitHub Actions verifies this before publishing.
+
+GitHub Actions also expands the finished ZIP before publishing and fails the build unless the controller executable, driver DLL, INF, catalog, public test certificate, and setup documentation are all present. This makes the rolling download a validated complete package rather than merely a successful compilation artifact.
 
 ## Driver signing
 
 The repository can compile and package the driver in CI. A public retail Windows build still requires the completed driver package to be submitted through Microsoft's Hardware/Partner Center signing process.
 
-Do not work around this by permanently disabling Secure Boot or driver-signing enforcement on end-user machines.
+The rolling GitHub build is a **development/test-signed package**. When Windows reports that the catalog chain terminates in an untrusted root, selecting **Install driver** in MUX offers to add the included public build certificate to the Local Computer **Trusted Root Certification Authorities** and **Trusted Publishers** stores, then automatically retries `pnputil`.
 
-Development/test signing is suitable for engineering machines. The rolling GitHub build should be treated as a development package until the catalog has the production Microsoft signature required for normal retail installation.
+Only accept that prompt on a machine you control and only for a MUX package you obtained from the official repository. Trusting a certificate changes the machine trust configuration.
+
+Some Windows configurations can still require **Test Mode** to load test-signed driver code. MUX deliberately does not disable Secure Boot, change BCD boot security, or reboot the computer automatically. If the trusted development package is still rejected, use a Microsoft production-signed driver for normal installation or configure a dedicated engineering/test machine according to Microsoft's driver-testing guidance.
+
+Do not work around production distribution by permanently disabling Secure Boot or driver-signing enforcement on end-user machines.
 
 ## First use
 
@@ -138,12 +145,13 @@ Development/test signing is suitable for engineering machines. The rolling GitHu
 2. Extract the ZIP.
 3. Start `MUX.Virtual.exe` as administrator.
 4. Select **Install driver**.
-5. Select the MUX layout you want.
-6. Select **Activate virtual displays**.
-7. Drag a normal application into one of the MUX portals.
-8. Maximize it or press F11. Windows now treats that application as being on the corresponding real virtual monitor.
-9. Press `Ctrl + Alt + Esc` whenever you want to return the pointer to the physical desktop.
-10. Select **Stop** to remove the temporary virtual monitors.
+5. If prompted for the development signing certificate, review the warning and choose whether to trust the included public certificate on this machine. MUX retries the install automatically after trust is established.
+6. Select the MUX layout you want.
+7. Select **Activate virtual displays**.
+8. Drag a normal application into one of the MUX portals.
+9. Maximize it or press F11. Windows now treats that application as being on the corresponding real virtual monitor.
+10. Press `Ctrl + Alt + Esc` whenever you want to return the pointer to the physical desktop.
+11. Select **Stop** to remove the temporary virtual monitors.
 
 ## Current scope
 

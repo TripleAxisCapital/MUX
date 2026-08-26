@@ -68,7 +68,9 @@ public partial class MainWindow : Window
         LayoutPicker.SelectedItem = selected;
 
         DriverText.Text = _driverService.PackageIsBundled
-            ? "MUX Virtual driver package is bundled and ready to install."
+            ? _driverService.TestCertificateIsBundled
+                ? "MUX Virtual driver package and development signing certificate are bundled and ready."
+                : "MUX Virtual driver package is bundled. This build does not include a development signing certificate."
             : "Driver package is missing. Download the MUX Virtual release ZIP, not the Standard ZIP.";
 
         RefreshPlan();
@@ -135,9 +137,34 @@ public partial class MainWindow : Window
         try
         {
             var result = await _driverService.InstallAsync();
-            DriverText.Text = result.Output.Length > 500
-                ? result.Output[..500] + "…"
-                : result.Output;
+
+            if (result.TrustRequired)
+            {
+                var choice = MessageBox.Show(
+                    this,
+                    "This development build is test-signed. To install it, MUX must add the included public build certificate to this PC's Local Computer Trusted Root and Trusted Publishers stores.\n\nOnly continue on a machine you control. The certificate contains no private key.\n\nTrust this MUX development certificate and retry the driver installation?",
+                    "Trust MUX development driver?",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning);
+
+                if (choice == MessageBoxResult.Yes)
+                {
+                    SetStatus(
+                        "Trusting development certificate and installing driver…",
+                        running: false);
+                    result = await _driverService.InstallAsync(
+                        allowTestCertificateTrust: true);
+                }
+                else
+                {
+                    SetStatus("Driver installation cancelled", running: false);
+                    DriverText.Text =
+                        "The driver was not installed because the development signing certificate was not trusted.";
+                    return;
+                }
+            }
+
+            SetDriverOutput(result.Output);
 
             SetStatus(
                 result.Success
@@ -239,6 +266,14 @@ public partial class MainWindow : Window
             ActivateButton.IsEnabled = !busy;
             ReloadButton.IsEnabled = !busy;
         }
+    }
+
+    private void SetDriverOutput(string output)
+    {
+        const int maxCharacters = 1800;
+        DriverText.Text = output.Length > maxCharacters
+            ? output[..maxCharacters] + "…"
+            : output;
     }
 
     private void SetStatus(string text, bool running)

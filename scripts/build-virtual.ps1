@@ -119,6 +119,18 @@ try {
         Copy-Item $candidate.FullName (Join-Path $driverPublish $name) -Force
     }
 
+    $catPath = Join-Path $driverPublish 'MUXVirtualDisplay.cat'
+    $signature = Get-AuthenticodeSignature -FilePath $catPath
+    if (-not $signature.SignerCertificate) {
+        throw 'The generated driver catalog does not expose a signing certificate.'
+    }
+
+    $certPath = Join-Path $driverPublish 'MUXVirtualDisplay-TestCertificate.cer'
+    $certBytes = $signature.SignerCertificate.Export(
+        [System.Security.Cryptography.X509Certificates.X509ContentType]::Cert)
+    [System.IO.File]::WriteAllBytes($certPath, $certBytes)
+    Write-Host "Exported the public driver test certificate: $certPath" -ForegroundColor DarkGray
+
     Copy-Item .\docs\VIRTUAL-DISPLAYS.md (Join-Path $appPublish 'VIRTUAL-DISPLAYS.md') -Force
 
     $zip = Join-Path $root 'artifacts\MUX-Virtual-win-x64.zip'

@@ -189,6 +189,18 @@ jobs:
             Copy-Item $candidate.FullName (Join-Path $driverOut $name) -Force
           }
 
+          $catPath = Join-Path $driverOut "MUXVirtualDisplay.cat"
+          $signature = Get-AuthenticodeSignature -FilePath $catPath
+          if (-not $signature.SignerCertificate) {
+            throw "The generated driver catalog does not expose a signing certificate."
+          }
+
+          $certPath = Join-Path $driverOut "MUXVirtualDisplay-TestCertificate.cer"
+          $certBytes = $signature.SignerCertificate.Export(
+            [System.Security.Cryptography.X509Certificates.X509ContentType]::Cert)
+          [System.IO.File]::WriteAllBytes($certPath, $certBytes)
+          Write-Host "Exported the public driver test certificate to $certPath"
+
           Copy-Item "docs/VIRTUAL-DISPLAYS.md" "artifacts/MUX.Virtual/VIRTUAL-DISPLAYS.md" -Force
 
           Compress-Archive `
@@ -215,6 +227,7 @@ jobs:
             "Driver/MUXVirtualDisplay.dll",
             "Driver/MUXVirtualDisplay.inf",
             "Driver/MUXVirtualDisplay.cat",
+            "Driver/MUXVirtualDisplay-TestCertificate.cer",
             "VIRTUAL-DISPLAYS.md"
           )
 
@@ -225,7 +238,13 @@ jobs:
             }
           }
 
-          Write-Host "MUX Virtual package contains the controller, complete driver package, and setup documentation."
+          $certificate = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2(
+            (Join-Path $verifyRoot "Driver/MUXVirtualDisplay-TestCertificate.cer"))
+          if ($certificate.HasPrivateKey) {
+            throw "The public release must never contain a private signing key."
+          }
+
+          Write-Host "MUX Virtual package contains the controller, complete driver package, public test certificate, and setup documentation."
 
       - uses: actions/upload-artifact@v4
         with:
@@ -272,7 +291,7 @@ jobs:
             gh release edit latest-build \
               --repo "$GITHUB_REPOSITORY" \
               --title "MUX Latest Windows Builds" \
-              --notes "Two independent Windows downloads from main: MUX Standard (managed monitor regions) and MUX Virtual Displays (IddCx true virtual-monitor architecture). The Virtual driver package must be production-signed through Microsoft before frictionless retail installation."
+              --notes "Two independent Windows downloads from main: MUX Standard (managed monitor regions) and MUX Virtual Displays (IddCx true virtual-monitor architecture). The rolling Virtual build is test-signed for development and includes only the public test certificate needed for explicit local trust. Retail distribution still requires Microsoft production driver signing."
           else
             gh release create latest-build \
               release-assets/MUX-win-x64.zip \
@@ -280,6 +299,6 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --title "MUX Latest Windows Builds" \
-              --notes "Two independent Windows downloads from main: MUX Standard (managed monitor regions) and MUX Virtual Displays (IddCx true virtual-monitor architecture). The Virtual driver package must be production-signed through Microsoft before frictionless retail installation." \
+              --notes "Two independent Windows downloads from main: MUX Standard (managed monitor regions) and MUX Virtual Displays (IddCx true virtual-monitor architecture). The rolling Virtual build is test-signed for development and includes only the public test certificate needed for explicit local trust. Retail distribution still requires Microsoft production driver signing." \
               --prerelease
           fi

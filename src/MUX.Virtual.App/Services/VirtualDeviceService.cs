@@ -5,10 +5,8 @@ namespace MUX.Virtual.App.Services;
 public sealed class VirtualDeviceService : IDisposable
 {
     private const uint DevPropTypeBinary = 0x00001003;
-    private const uint Capabilities =
-        0x00000001 | // Removable
-        0x00000002 | // SilentInstall
-        0x00000008;  // DriverRequired
+    private const uint Capabilities = 0x00000001 | 0x00000002 | 0x00000008;
+    private const string DeviceId = "MUXVirtualDisplay";
 
     private static readonly Guid ConfigPropertyGuid =
         new("4B3E5D11-7C2A-4A91-9F3E-58A9D1C72A10");
@@ -20,6 +18,7 @@ public sealed class VirtualDeviceService : IDisposable
     private SwDeviceCreateCallback? _callback;
 
     public bool IsCreated => _handle != IntPtr.Zero;
+    public string? DeviceInstanceId { get; private set; }
 
     public async Task CreateAsync(
         IReadOnlyList<VirtualMonitorPlan> plans,
@@ -31,19 +30,26 @@ public sealed class VirtualDeviceService : IDisposable
         }
 
         DisposeHandle();
+        DeviceInstanceId = null;
 
         var configBytes = BuildDriverConfig(plans);
-        var completion = new TaskCompletionSource<int>(
+        var completion = new TaskCompletionSource<DeviceCreateCompletion>(
             TaskCreationOptions.RunContinuationsAsynchronously);
 
-        _callback = (_, createResult, _, _) =>
+        _callback = (_, createResult, _, deviceInstanceId) =>
         {
-            completion.TrySetResult(createResult);
+            var instance = deviceInstanceId == IntPtr.Zero
+                ? null
+                : Marshal.PtrToStringUni(deviceInstanceId);
+            completion.TrySetResult(new DeviceCreateCompletion(createResult, instance));
         };
 
-        var instanceId = Marshal.StringToHGlobalUni("MUX-VIRTUAL-DISPLAY-ADAPTER");
-        var hardwareIds = Marshal.StringToHGlobalUni("MUXVirtualDisplay\0\0");
-        var compatibleIds = Marshal.StringToHGlobalUni("MUXVirtualDisplay\0\0");
+        // Match Microsoft's IddSampleApp pattern: enumerator, instance ID and PnP IDs
+        // all use the same stable driver identifier. This avoids an unnecessary SWD\MUX
+        // namespace that can make driver matching/diagnostics ambiguous.
+        var instanceId = Marshal.StringToHGlobalUni(DeviceId);
+        var hardwareIds = Marshal.StringToHGlobalUni(DeviceId + "\0\0");
+        var compatibleIds = Marshal.StringToHGlobalUni(DeviceId + "\0\0");
         var description = Marshal.StringToHGlobalUni("MUX Virtual Display Adapter");
         var location = Marshal.StringToHGlobalUni("MUX");
         var containerPtr = Marshal.AllocHGlobal(Marshal.SizeOf<Guid>());
@@ -71,11 +77,7 @@ public sealed class VirtualDeviceService : IDisposable
             {
                 CompKey = new DevPropCompKey
                 {
-                    Key = new DevPropKey
-                    {
-                        fmtid = ConfigPropertyGuid,
-                        pid = 2
-                    },
+                    Key = new DevPropKey { fmtid = ConfigPropertyGuid, pid = 2 },
                     Store = 0,
                     LocaleName = IntPtr.Zero
                 },
@@ -85,7 +87,7 @@ public sealed class VirtualDeviceService : IDisposable
             };
 
             var hr = SwDeviceCreate(
-                "MUX",
+                DeviceId,
                 "HTREE\\ROOT\\0",
                 ref createInfo,
                 1,
@@ -94,14 +96,21 @@ public sealed class VirtualDeviceService : IDisposable
                 IntPtr.Zero,
                 out _handle);
 
-            Marshal.ThrowExceptionForHR(hr);
+            if (hr < 0)
+            {
+                throw BuildCreateException(hr, null, "SwDeviceCreate could not start device enumeration");
+            }
 
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(
-                cancellationToken);
-            timeoutCts.CancelAfter(TimeSpan.FromSeconds(15));
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(20));
 
-            var createResult = await completion.Task.WaitAsync(timeoutCts.Token);
-            Marshal.ThrowExceptionForHR(createResult);
+            var completed = await completion.Task.WaitAsync(timeoutCts.Token);
+            DeviceInstanceId = completed.InstanceId;
+            if (completed.HResult < 0)
+            {
+                throw BuildCreateException(completed.HResult, completed.InstanceId,
+                    "Windows PnP could not enumerate/start the MUX software display device");
+            }
         }
         catch
         {
@@ -120,6 +129,19 @@ public sealed class VirtualDeviceService : IDisposable
         }
     }
 
+    private static Exception BuildCreateException(int hr, string? instanceId, string heading)
+    {
+        var code = unchecked((uint)hr);
+        var native = Marshal.GetExceptionForHR(hr)?.Message ?? "Unknown Windows error";
+        var instance = string.IsNullOrWhiteSpace(instanceId) ? string.Empty : $" Device: {instanceId}.";
+        var hint = code == 0x8007007E
+            ? " Windows reported ERROR_MOD_NOT_FOUND while loading the device stack. For the rolling development build, make sure the bundled certificate is trusted, Windows Test Mode is active for the current boot, and the PC has been restarted after enabling it."
+            : string.Empty;
+
+        return new InvalidOperationException(
+            $"{heading} (0x{code:X8}: {native}).{instance}{hint}");
+    }
+
     public void Dispose()
     {
         DisposeHandle();
@@ -135,10 +157,10 @@ public sealed class VirtualDeviceService : IDisposable
 
         SwDeviceClose(_handle);
         _handle = IntPtr.Zero;
+        DeviceInstanceId = null;
     }
 
-    private static byte[] BuildDriverConfig(
-        IReadOnlyList<VirtualMonitorPlan> plans)
+    private static byte[] BuildDriverConfig(IReadOnlyList<VirtualMonitorPlan> plans)
     {
         const int monitorSize = 28;
         const int maxMonitors = VirtualDisplayPlanner.MaxVirtualMonitors;
@@ -151,7 +173,6 @@ public sealed class VirtualDeviceService : IDisposable
         {
             var offset = 8 + i * monitorSize;
             var plan = plans[i];
-
             BitConverter.GetBytes((uint)plan.Width).CopyTo(bytes, offset);
             BitConverter.GetBytes((uint)plan.Height).CopyTo(bytes, offset + 4);
             BitConverter.GetBytes(plan.RefreshRate).CopyTo(bytes, offset + 8);
@@ -160,6 +181,8 @@ public sealed class VirtualDeviceService : IDisposable
 
         return bytes;
     }
+
+    private sealed record DeviceCreateCompletion(int HResult, string? InstanceId);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct SwDeviceCreateInfo
@@ -176,11 +199,7 @@ public sealed class VirtualDeviceService : IDisposable
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    private struct DevPropKey
-    {
-        public Guid fmtid;
-        public uint pid;
-    }
+    private struct DevPropKey { public Guid fmtid; public uint pid; }
 
     [StructLayout(LayoutKind.Sequential)]
     private struct DevPropCompKey

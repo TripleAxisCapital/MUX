@@ -3,6 +3,7 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>enable</Nullable>
@@ -11,13 +12,6 @@
     <RootNamespace>MUX.Virtual.App</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>..\MUX.App\Assets\mux-app.ico</ApplicationIcon>
-
-    <!--
-      Keep the controller self-contained, but deliberately do not bundle it into
-      one self-extracting executable. A normal multi-file publish is more
-      transparent to Windows security scanners and avoids extracting the WPF/.NET
-      runtime into a temporary directory every time MUX Virtual starts.
-    -->
     <PublishSingleFile>false</PublishSingleFile>
     <SelfContained>true</SelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
@@ -28,6 +22,8 @@
   <ItemGroup>
     <Resource Include="..\MUX.App\Assets\mux-app.ico" Link="Assets\mux-app.ico" />
     <Resource Include="..\MUX.App\Assets\mux-logo.png" Link="Assets\mux-logo.png" />
+    <!-- Reuse Standard's production editor controls/dialogs instead of maintaining a second, drifting editor. -->
+    <ProjectReference Include="..\MUX.App\MUX.App.csproj" />
     <ProjectReference Include="..\MUX.Core\MUX.Core.csproj" />
   </ItemGroup>
 

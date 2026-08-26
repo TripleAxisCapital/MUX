@@ -2,6 +2,35 @@ using MUX.Virtual.App.Models;
 
 namespace MUX.Virtual.App.Services;
 
+public enum VirtualActivationStage
+{
+    SoftwareDevice,
+    DisplayTopology,
+    Compositor,
+    InputPortal
+}
+
+public sealed class VirtualActivationException : Exception
+{
+    public VirtualActivationException(VirtualActivationStage stage, Exception inner)
+        : base($"{StageLabel(stage)} failed: {inner.Message}", inner)
+    {
+        Stage = stage;
+        HResult = inner.HResult;
+    }
+
+    public VirtualActivationStage Stage { get; }
+
+    private static string StageLabel(VirtualActivationStage stage) => stage switch
+    {
+        VirtualActivationStage.SoftwareDevice => "Creating the Windows virtual-display device",
+        VirtualActivationStage.DisplayTopology => "Attaching the Windows virtual monitors",
+        VirtualActivationStage.Compositor => "Starting the physical MUX monitor portals",
+        VirtualActivationStage.InputPortal => "Starting virtual-monitor input routing",
+        _ => "MUX Virtual activation"
+    };
+}
+
 public sealed class VirtualDisplayEngine : IDisposable
 {
     private readonly VirtualDeviceService _device = new();
@@ -22,13 +51,42 @@ public sealed class VirtualDisplayEngine : IDisposable
 
         try
         {
-            await _device.CreateAsync(plans, cancellationToken);
-            ActiveMonitors = await _topology.ConfigureAsync(
-                plans,
-                cancellationToken);
+            try
+            {
+                await _device.CreateAsync(plans, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                throw new VirtualActivationException(VirtualActivationStage.SoftwareDevice, ex);
+            }
 
-            _compositor.Start(ActiveMonitors);
-            _portal.Start(ActiveMonitors);
+            try
+            {
+                ActiveMonitors = await _topology.ConfigureAsync(plans, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                throw new VirtualActivationException(VirtualActivationStage.DisplayTopology, ex);
+            }
+
+            try
+            {
+                _compositor.Start(ActiveMonitors);
+            }
+            catch (Exception ex)
+            {
+                throw new VirtualActivationException(VirtualActivationStage.Compositor, ex);
+            }
+
+            try
+            {
+                _portal.Start(ActiveMonitors);
+            }
+            catch (Exception ex)
+            {
+                throw new VirtualActivationException(VirtualActivationStage.InputPortal, ex);
+            }
+
             IsRunning = true;
         }
         catch

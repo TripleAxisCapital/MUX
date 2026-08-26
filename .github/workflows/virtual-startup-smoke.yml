@@ -100,8 +100,13 @@ jobs:
 
           $startup = Get-Content $startupLog -Raw
           if ($startup -notmatch "Main window shown") {
-            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            Write-Host "--- MUX Virtual startup.log ---"
             Write-Host $startup
+            if (Test-Path $errorLog) {
+              Write-Host "--- MUX Virtual startup-error.log ---"
+              Get-Content $errorLog
+            }
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
             throw "MUX Virtual process stayed alive but did not confirm that the main window was shown."
           }
 

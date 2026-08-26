@@ -9,7 +9,7 @@
         WindowStartupLocation="CenterScreen"
         Background="#0E0F12"
         Foreground="#F2F3F5"
-        Icon="Assets/mux-app.ico"
+        Icon="pack://application:,,,/Assets/mux-logo.png"
         Loaded="Window_Loaded"
         Closing="Window_Closing">
     <Grid Margin="34">

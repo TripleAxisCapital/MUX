@@ -4,6 +4,7 @@ namespace MUX.Virtual.App.Services;
 
 public enum VirtualActivationStage
 {
+    DriverSetup,
     SoftwareDevice,
     DisplayTopology,
     Compositor,
@@ -23,6 +24,7 @@ public sealed class VirtualActivationException : Exception
 
     private static string StageLabel(VirtualActivationStage stage) => stage switch
     {
+        VirtualActivationStage.DriverSetup => "Preparing the MUX virtual-display driver",
         VirtualActivationStage.SoftwareDevice => "Creating the Windows virtual-display device",
         VirtualActivationStage.DisplayTopology => "Attaching the Windows virtual monitors",
         VirtualActivationStage.Compositor => "Starting the physical MUX monitor portals",
@@ -33,6 +35,7 @@ public sealed class VirtualActivationException : Exception
 
 public sealed class VirtualDisplayEngine : IDisposable
 {
+    private readonly DriverPackageService _driver = new();
     private readonly VirtualDeviceService _device = new();
     private readonly DisplayTopologyService _topology = new();
     private readonly MagnifierCompositorService _compositor = new();
@@ -51,6 +54,25 @@ public sealed class VirtualDisplayEngine : IDisposable
 
         try
         {
+            // Activation is intentionally self-preparing. A user must never have to know
+            // that "Install driver" has to be pressed before "Activate". For the rolling
+            // development package, MainWindow already requires Windows Test Mode before
+            // reaching this point. Once the user explicitly activates MUX Virtual, stage
+            // the bundled driver and, if Windows rejects the WDK test certificate, trust
+            // only that bundled public certificate and retry.
+            try
+            {
+                var install = await _driver.InstallAsync(allowTestCertificateTrust: true);
+                if (!install.Success)
+                {
+                    throw new InvalidOperationException(install.Output);
+                }
+            }
+            catch (Exception ex)
+            {
+                throw new VirtualActivationException(VirtualActivationStage.DriverSetup, ex);
+            }
+
             try
             {
                 await _device.CreateAsync(plans, cancellationToken);

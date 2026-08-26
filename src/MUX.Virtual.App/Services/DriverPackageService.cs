@@ -37,7 +37,7 @@ public sealed class DriverPackageService
         if (!TestCertificateIsBundled)
         {
             return new DriverRuntimeStatus(true, false, true,
-                "Production driver package detected.");
+                "Production driver package bundled · activation will verify/install it automatically.");
         }
 
         var testSigning = IsCurrentBootTestSigned();
@@ -46,8 +46,28 @@ public sealed class DriverPackageService
             true,
             testSigning,
             testSigning
-                ? "Development driver ready · Windows Test Mode is active."
-                : "Development driver installed/staged · Windows Test Mode is required before the test-signed driver can start.");
+                ? "Development driver package bundled · Windows Test Mode is active. Activation will install/verify the driver automatically."
+                : "Development driver package bundled · Windows Test Mode must be enabled and Windows restarted before activation.");
+    }
+
+    public async Task<bool> IsDriverStagedAsync()
+    {
+        try
+        {
+            var result = await RunProcessAsync(SystemTool("pnputil.exe"), "/enum-drivers");
+            if (!result.Success || string.IsNullOrWhiteSpace(result.Output))
+            {
+                return false;
+            }
+
+            return result.Output.Contains("MUXVirtualDisplay.inf", StringComparison.OrdinalIgnoreCase) ||
+                   result.Output.Contains("Triple Axis Capital", StringComparison.OrdinalIgnoreCase) &&
+                   result.Output.Contains("Display", StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     public async Task<DriverInstallResult> InstallAsync(bool allowTestCertificateTrust = false)
@@ -61,8 +81,14 @@ public sealed class DriverPackageService
         var firstAttempt = await RunPnPUtilAsync();
         if (firstAttempt.Success)
         {
+            if (!await IsDriverStagedAsync())
+            {
+                return new DriverInstallResult(false,
+                    "Windows reported that the MUX driver package was added, but MUX could not verify it in the Windows driver store.\n\n" + firstAttempt.Output);
+            }
+
             return new DriverInstallResult(true,
-                "MUX Virtual display driver staged successfully.\n\n" + firstAttempt.Output);
+                "MUX Virtual display driver staged and verified successfully.\n\n" + firstAttempt.Output);
         }
 
         if (!LooksLikeUntrustedRoot(firstAttempt.Output))
@@ -93,8 +119,14 @@ public sealed class DriverPackageService
         var retry = await RunPnPUtilAsync();
         if (retry.Success)
         {
+            if (!await IsDriverStagedAsync())
+            {
+                return new DriverInstallResult(false,
+                    "The certificate is trusted and Windows reported that the driver was added, but MUX could not verify the package in the driver store.\n\n" + retry.Output);
+            }
+
             return new DriverInstallResult(true,
-                "MUX trusted the development signing certificate and staged the virtual display driver successfully.\n\n" + retry.Output);
+                "MUX trusted the development signing certificate and staged/verified the virtual display driver successfully.\n\n" + retry.Output);
         }
 
         return new DriverInstallResult(false,

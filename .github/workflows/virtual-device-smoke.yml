@@ -44,7 +44,7 @@ jobs:
           & pnputil.exe /add-driver (Join-Path $driver "MUXVirtualDisplay.inf") /install
           if ($LASTEXITCODE -ne 0) { throw "Could not stage MUX virtual display driver." }
 
-      - name: Create MUX software display device
+      - name: Differential software-device creation probe
         shell: pwsh
         run: |
           $exe = Join-Path $PWD "artifacts/MUX.Virtual/MUX.Virtual.exe"
@@ -56,5 +56,43 @@ jobs:
             Write-Host "----------------------------"
           }
           if ($process.ExitCode -ne 0) {
-            throw "MUX software-device smoke failed with exit code $($process.ExitCode)."
+            Write-Host "MUX differential device probe exited with $($process.ExitCode)."
+            exit $process.ExitCode
           }
+
+      - name: Windows device-install diagnostics
+        if: failure()
+        shell: pwsh
+        run: |
+          Write-Host "--- Test-signing boot state ---"
+          & bcdedit.exe /enum "{current}" 2>&1 | Out-String | Write-Host
+
+          $setupLog = Join-Path $env:WINDIR "INF/setupapi.dev.log"
+          if (Test-Path $setupLog) {
+            Write-Host "--- Relevant setupapi.dev.log lines ---"
+            $lines = Get-Content $setupLog
+            $indexes = for ($i = 0; $i -lt $lines.Count; $i++) {
+              if ($lines[$i] -match "MUXVirtualDisplay|MUX Virtual|IndirectKmd|IddCx") { $i }
+            }
+            if ($indexes) {
+              $start = [Math]::Max(0, ($indexes | Select-Object -Last 1) - 80)
+              $end = [Math]::Min($lines.Count - 1, $start + 180)
+              $lines[$start..$end] | Write-Host
+            } else {
+              $lines | Select-Object -Last 250 | Write-Host
+            }
+          }
+
+          Write-Host "--- Code Integrity events ---"
+          try {
+            Get-WinEvent -LogName "Microsoft-Windows-CodeIntegrity/Operational" -MaxEvents 80 |
+              Where-Object { $_.Message -match "MUX|MUXVirtualDisplay|IndirectKmd|IddCx|UMDF" } |
+              Format-List TimeCreated, Id, LevelDisplayName, Message | Out-String | Write-Host
+          } catch { Write-Host $_ }
+
+          Write-Host "--- UMDF events ---"
+          try {
+            Get-WinEvent -LogName "Microsoft-Windows-DriverFrameworks-UserMode/Operational" -MaxEvents 80 |
+              Where-Object { $_.Message -match "MUX|MUXVirtualDisplay|IndirectKmd|IddCx" } |
+              Format-List TimeCreated, Id, LevelDisplayName, Message | Out-String | Write-Host
+          } catch { Write-Host $_ }

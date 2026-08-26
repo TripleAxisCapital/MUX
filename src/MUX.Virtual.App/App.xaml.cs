@@ -55,12 +55,32 @@ public partial class App : Application
 
     private static async Task<int> RunDeviceSmokeAsync()
     {
+        Directory.CreateDirectory(LogRoot);
+        File.WriteAllText(DeviceSmokeLogPath,
+            $"{DateTimeOffset.Now:O} Starting software-device differential smoke test.{Environment.NewLine}");
+
         try
         {
-            Directory.CreateDirectory(LogRoot);
-            File.WriteAllText(DeviceSmokeLogPath,
-                $"{DateTimeOffset.Now:O} Starting software-device smoke test.{Environment.NewLine}");
+            using (var bareService = new VirtualDeviceService())
+            {
+                File.AppendAllText(DeviceSmokeLogPath,
+                    $"{DateTimeOffset.Now:O} Trying Microsoft's minimal IddSampleApp parameter shape...{Environment.NewLine}");
+                await bareService.CreateBareMicrosoftSampleShapeAsync();
+                File.AppendAllText(DeviceSmokeLogPath,
+                    $"{DateTimeOffset.Now:O} Minimal Microsoft shape succeeded. Instance: {bareService.DeviceInstanceId}{Environment.NewLine}");
+                await Task.Delay(500);
+            }
+        }
+        catch (Exception ex)
+        {
+            File.AppendAllText(DeviceSmokeLogPath,
+                $"{DateTimeOffset.Now:O} MINIMAL_MICROSOFT_SHAPE_FAILED{Environment.NewLine}{ex}{Environment.NewLine}");
+            LogException("Device smoke minimal Microsoft shape", ex);
+            return 32;
+        }
 
+        try
+        {
             using var service = new VirtualDeviceService();
             var plan = new VirtualMonitorPlan(
                 Guid.Parse("38E109C4-31B0-4FC8-9D8B-5BBE4051DF86"),
@@ -70,18 +90,20 @@ public partial class App : Application
                 720,
                 60);
 
+            File.AppendAllText(DeviceSmokeLogPath,
+                $"{DateTimeOffset.Now:O} Trying MUX configured software-device shape...{Environment.NewLine}");
             await service.CreateAsync(new[] { plan });
             File.AppendAllText(DeviceSmokeLogPath,
-                $"{DateTimeOffset.Now:O} Software device created successfully. Instance: {service.DeviceInstanceId}{Environment.NewLine}");
+                $"{DateTimeOffset.Now:O} MUX configured device created successfully. Instance: {service.DeviceInstanceId}{Environment.NewLine}");
             await Task.Delay(1200);
             return 0;
         }
         catch (Exception ex)
         {
             File.AppendAllText(DeviceSmokeLogPath,
-                $"{DateTimeOffset.Now:O} FAILED{Environment.NewLine}{ex}{Environment.NewLine}");
-            LogException("Device smoke", ex);
-            return 31;
+                $"{DateTimeOffset.Now:O} MUX_CONFIGURED_SHAPE_FAILED{Environment.NewLine}{ex}{Environment.NewLine}");
+            LogException("Device smoke configured MUX shape", ex);
+            return 33;
         }
     }
 

@@ -33,25 +33,8 @@ public sealed class VirtualDeviceService : IDisposable
         DeviceInstanceId = null;
 
         var configBytes = BuildDriverConfig(plans);
-        var completion = new TaskCompletionSource<DeviceCreateCompletion>(
-            TaskCreationOptions.RunContinuationsAsynchronously);
-
-        _callback = (_, createResult, _, deviceInstanceId) =>
-        {
-            var instance = deviceInstanceId == IntPtr.Zero
-                ? null
-                : Marshal.PtrToStringUni(deviceInstanceId);
-            completion.TrySetResult(new DeviceCreateCompletion(createResult, instance));
-        };
-
-        // Match Microsoft's IddSampleApp pattern: enumerator, instance ID and PnP IDs
-        // all use the same stable driver identifier. This avoids an unnecessary SWD\MUX
-        // namespace that can make driver matching/diagnostics ambiguous.
-        var instanceId = Marshal.StringToHGlobalUni(DeviceId);
-        var hardwareIds = Marshal.StringToHGlobalUni(DeviceId + "\0\0");
-        var compatibleIds = Marshal.StringToHGlobalUni(DeviceId + "\0\0");
-        var description = Marshal.StringToHGlobalUni("MUX Virtual Display Adapter");
-        var location = Marshal.StringToHGlobalUni("MUX");
+        var completion = CreateCompletionSource();
+        var unmanaged = AllocateCommonStrings(includeOptionalMetadata: true);
         var containerPtr = Marshal.AllocHGlobal(Marshal.SizeOf<Guid>());
         var configPtr = Marshal.AllocHGlobal(configBytes.Length);
 
@@ -60,19 +43,7 @@ public sealed class VirtualDeviceService : IDisposable
             Marshal.StructureToPtr(DeviceContainerId, containerPtr, false);
             Marshal.Copy(configBytes, 0, configPtr, configBytes.Length);
 
-            var createInfo = new SwDeviceCreateInfo
-            {
-                cbSize = (uint)Marshal.SizeOf<SwDeviceCreateInfo>(),
-                pszInstanceId = instanceId,
-                pszzHardwareIds = hardwareIds,
-                pszzCompatibleIds = compatibleIds,
-                pContainerId = containerPtr,
-                CapabilityFlags = Capabilities,
-                pszDeviceDescription = description,
-                pszDeviceLocation = location,
-                pSecurityDescriptor = IntPtr.Zero
-            };
-
+            var createInfo = BuildCreateInfo(unmanaged, containerPtr);
             var property = new DevProperty
             {
                 CompKey = new DevPropCompKey
@@ -86,31 +57,17 @@ public sealed class VirtualDeviceService : IDisposable
                 Buffer = configPtr
             };
 
-            var hr = SwDeviceCreate(
+            var hr = SwDeviceCreateConfigured(
                 DeviceId,
                 "HTREE\\ROOT\\0",
                 ref createInfo,
                 1,
                 ref property,
-                _callback,
+                _callback!,
                 IntPtr.Zero,
                 out _handle);
 
-            if (hr < 0)
-            {
-                throw BuildCreateException(hr, null, "SwDeviceCreate could not start device enumeration");
-            }
-
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeoutCts.CancelAfter(TimeSpan.FromSeconds(20));
-
-            var completed = await completion.Task.WaitAsync(timeoutCts.Token);
-            DeviceInstanceId = completed.InstanceId;
-            if (completed.HResult < 0)
-            {
-                throw BuildCreateException(completed.HResult, completed.InstanceId,
-                    "Windows PnP could not enumerate/start the MUX software display device");
-            }
+            await FinishCreationAsync(hr, completion, cancellationToken, "configured MUX software device");
         }
         catch
         {
@@ -119,13 +76,104 @@ public sealed class VirtualDeviceService : IDisposable
         }
         finally
         {
-            Marshal.FreeHGlobal(instanceId);
-            Marshal.FreeHGlobal(hardwareIds);
-            Marshal.FreeHGlobal(compatibleIds);
-            Marshal.FreeHGlobal(description);
-            Marshal.FreeHGlobal(location);
+            unmanaged.Free();
             Marshal.FreeHGlobal(containerPtr);
             Marshal.FreeHGlobal(configPtr);
+        }
+    }
+
+    /// <summary>
+    /// Uses the exact minimal parameter shape from Microsoft's IddSampleApp: no custom
+    /// properties, no container ID and no location string. This is intentionally kept as
+    /// a diagnostic probe so CI can distinguish Software Device API/PnP failures from
+    /// MUX's dynamic configuration property path.
+    /// </summary>
+    public async Task CreateBareMicrosoftSampleShapeAsync(
+        CancellationToken cancellationToken = default)
+    {
+        DisposeHandle();
+        DeviceInstanceId = null;
+
+        var completion = CreateCompletionSource();
+        var unmanaged = AllocateCommonStrings(includeOptionalMetadata: false);
+        try
+        {
+            var createInfo = BuildCreateInfo(unmanaged, IntPtr.Zero);
+            createInfo.pszDeviceLocation = IntPtr.Zero;
+
+            var hr = SwDeviceCreateBare(
+                DeviceId,
+                "HTREE\\ROOT\\0",
+                ref createInfo,
+                0,
+                IntPtr.Zero,
+                _callback!,
+                IntPtr.Zero,
+                out _handle);
+
+            await FinishCreationAsync(hr, completion, cancellationToken, "minimal Microsoft-sample-shape software device");
+        }
+        catch
+        {
+            DisposeHandle();
+            throw;
+        }
+        finally
+        {
+            unmanaged.Free();
+        }
+    }
+
+    private TaskCompletionSource<DeviceCreateCompletion> CreateCompletionSource()
+    {
+        var completion = new TaskCompletionSource<DeviceCreateCompletion>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _callback = (_, createResult, _, deviceInstanceId) =>
+        {
+            var instance = deviceInstanceId == IntPtr.Zero ? null : Marshal.PtrToStringUni(deviceInstanceId);
+            completion.TrySetResult(new DeviceCreateCompletion(createResult, instance));
+        };
+        return completion;
+    }
+
+    private static UnmanagedStrings AllocateCommonStrings(bool includeOptionalMetadata) => new(
+        Marshal.StringToHGlobalUni(DeviceId),
+        Marshal.StringToHGlobalUni(DeviceId + "\0\0"),
+        Marshal.StringToHGlobalUni(DeviceId + "\0\0"),
+        Marshal.StringToHGlobalUni("MUX Virtual Display Adapter"),
+        includeOptionalMetadata ? Marshal.StringToHGlobalUni("MUX") : IntPtr.Zero);
+
+    private static SwDeviceCreateInfo BuildCreateInfo(UnmanagedStrings unmanaged, IntPtr containerId) => new()
+    {
+        cbSize = (uint)Marshal.SizeOf<SwDeviceCreateInfo>(),
+        pszInstanceId = unmanaged.InstanceId,
+        pszzHardwareIds = unmanaged.HardwareIds,
+        pszzCompatibleIds = unmanaged.CompatibleIds,
+        pContainerId = containerId,
+        CapabilityFlags = Capabilities,
+        pszDeviceDescription = unmanaged.Description,
+        pszDeviceLocation = unmanaged.Location,
+        pSecurityDescriptor = IntPtr.Zero
+    };
+
+    private async Task FinishCreationAsync(
+        int initialHResult,
+        TaskCompletionSource<DeviceCreateCompletion> completion,
+        CancellationToken cancellationToken,
+        string shape)
+    {
+        if (initialHResult < 0)
+        {
+            throw BuildCreateException(initialHResult, null, $"SwDeviceCreate could not start {shape} enumeration");
+        }
+
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(20));
+        var completed = await completion.Task.WaitAsync(timeoutCts.Token);
+        DeviceInstanceId = completed.InstanceId;
+        if (completed.HResult < 0)
+        {
+            throw BuildCreateException(completed.HResult, completed.InstanceId,
+                $"Windows PnP could not enumerate/start the {shape}");
         }
     }
 
@@ -135,11 +183,10 @@ public sealed class VirtualDeviceService : IDisposable
         var native = Marshal.GetExceptionForHR(hr)?.Message ?? "Unknown Windows error";
         var instance = string.IsNullOrWhiteSpace(instanceId) ? string.Empty : $" Device: {instanceId}.";
         var hint = code == 0x8007007E
-            ? " Windows reported ERROR_MOD_NOT_FOUND while loading the device stack. For the rolling development build, make sure the bundled certificate is trusted, Windows Test Mode is active for the current boot, and the PC has been restarted after enabling it."
+            ? " Windows reported ERROR_MOD_NOT_FOUND before the MUX display stack became usable."
             : string.Empty;
 
-        return new InvalidOperationException(
-            $"{heading} (0x{code:X8}: {native}).{instance}{hint}");
+        return new InvalidOperationException($"{heading} (0x{code:X8}: {native}).{instance}{hint}");
     }
 
     public void Dispose()
@@ -154,7 +201,6 @@ public sealed class VirtualDeviceService : IDisposable
         {
             return;
         }
-
         SwDeviceClose(_handle);
         _handle = IntPtr.Zero;
         DeviceInstanceId = null;
@@ -165,10 +211,8 @@ public sealed class VirtualDeviceService : IDisposable
         const int monitorSize = 28;
         const int maxMonitors = VirtualDisplayPlanner.MaxVirtualMonitors;
         var bytes = new byte[8 + monitorSize * maxMonitors];
-
         BitConverter.GetBytes(1u).CopyTo(bytes, 0);
         BitConverter.GetBytes((uint)plans.Count).CopyTo(bytes, 4);
-
         for (var i = 0; i < plans.Count; i++)
         {
             var offset = 8 + i * monitorSize;
@@ -178,11 +222,29 @@ public sealed class VirtualDeviceService : IDisposable
             BitConverter.GetBytes(plan.RefreshRate).CopyTo(bytes, offset + 8);
             plan.ZoneId.ToByteArray().CopyTo(bytes, offset + 12);
         }
-
         return bytes;
     }
 
     private sealed record DeviceCreateCompletion(int HResult, string? InstanceId);
+
+    private readonly record struct UnmanagedStrings(
+        IntPtr InstanceId,
+        IntPtr HardwareIds,
+        IntPtr CompatibleIds,
+        IntPtr Description,
+        IntPtr Location)
+    {
+        public void Free()
+        {
+            foreach (var pointer in new[] { InstanceId, HardwareIds, CompatibleIds, Description, Location })
+            {
+                if (pointer != IntPtr.Zero)
+                {
+                    Marshal.FreeHGlobal(pointer);
+                }
+            }
+        }
+    }
 
     [StructLayout(LayoutKind.Sequential)]
     private struct SwDeviceCreateInfo
@@ -219,19 +281,26 @@ public sealed class VirtualDeviceService : IDisposable
     }
 
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
-    private delegate void SwDeviceCreateCallback(
-        IntPtr hSwDevice,
-        int createResult,
-        IntPtr context,
-        IntPtr deviceInstanceId);
+    private delegate void SwDeviceCreateCallback(IntPtr hSwDevice, int createResult, IntPtr context, IntPtr deviceInstanceId);
 
-    [DllImport("Cfgmgr32.dll", CharSet = CharSet.Unicode)]
-    private static extern int SwDeviceCreate(
+    [DllImport("Cfgmgr32.dll", EntryPoint = "SwDeviceCreate", CharSet = CharSet.Unicode)]
+    private static extern int SwDeviceCreateConfigured(
         string pszEnumeratorName,
         string pszParentDeviceInstance,
         ref SwDeviceCreateInfo pCreateInfo,
         uint cPropertyCount,
         ref DevProperty pProperties,
+        SwDeviceCreateCallback pCallback,
+        IntPtr pContext,
+        out IntPtr phSwDevice);
+
+    [DllImport("Cfgmgr32.dll", EntryPoint = "SwDeviceCreate", CharSet = CharSet.Unicode)]
+    private static extern int SwDeviceCreateBare(
+        string pszEnumeratorName,
+        string pszParentDeviceInstance,
+        ref SwDeviceCreateInfo pCreateInfo,
+        uint cPropertyCount,
+        IntPtr pProperties,
         SwDeviceCreateCallback pCallback,
         IntPtr pContext,
         out IntPtr phSwDevice);

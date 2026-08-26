@@ -39,6 +39,37 @@ try {
         throw 'MSBuild with Visual Studio C++ build tools could not be located.'
     }
 
+    $wdkPackages = Join-Path $root 'driver\packages'
+    $requiredWdkTools = @('stampinf.exe', 'inf2cat.exe', 'signtool.exe', 'tracewpp.exe')
+    $wdkToolDirs = @()
+
+    foreach ($toolName in $requiredWdkTools) {
+        $tool = Get-ChildItem -Path $wdkPackages -Recurse -File -Filter $toolName -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match 'x64|amd64' } |
+            Select-Object -First 1
+
+        if (-not $tool) {
+            $tool = Get-ChildItem -Path $wdkPackages -Recurse -File -Filter $toolName -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+        }
+
+        if ($tool) {
+            $wdkToolDirs += $tool.DirectoryName
+            Write-Host "Found WDK tool $toolName at $($tool.FullName)" -ForegroundColor DarkGray
+        }
+    }
+
+    $wdkToolDirs = $wdkToolDirs | Sort-Object -Unique
+    if (-not $wdkToolDirs) {
+        throw 'No WDK native tool directories were found after restoring the WDK NuGet packages.'
+    }
+
+    $env:PATH = (($wdkToolDirs -join ';') + ';' + $env:PATH)
+
+    if (-not (Get-Command stampinf.exe -ErrorAction SilentlyContinue)) {
+        throw 'stampinf.exe is still unavailable after configuring the WDK tool path.'
+    }
+
     Write-Host "Building MUX IddCx virtual display driver with: $msbuild" -ForegroundColor Cyan
     & $msbuild $driverProject /m /p:Configuration=Release /p:Platform=x64
     if ($LASTEXITCODE -ne 0) {

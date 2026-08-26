@@ -1,0 +1,60 @@
+name: MUX Virtual device smoke
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  device-smoke:
+    name: MUX software display device · Windows x64
+    runs-on: windows-2025-vs2026
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build complete Virtual package
+        shell: pwsh
+        run: ./scripts/build-virtual.ps1
+
+      - name: Trust and stage CI test driver
+        shell: pwsh
+        run: |
+          $driver = Join-Path $PWD "artifacts/MUX.Virtual/Driver"
+          $cat = Join-Path $driver "MUXVirtualDisplay.cat"
+          $cert = Join-Path $driver "MUXVirtualDisplay-TestCertificate.cer"
+          $signature = Get-AuthenticodeSignature -FilePath $cat
+          if (-not $signature.SignerCertificate) {
+            throw "Driver catalog has no signer certificate."
+          }
+          [System.IO.File]::WriteAllBytes(
+            $cert,
+            $signature.SignerCertificate.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert))
+
+          & certutil.exe -addstore -f Root $cert
+          if ($LASTEXITCODE -ne 0) { throw "Could not trust test certificate in Root." }
+          & certutil.exe -addstore -f TrustedPublisher $cert
+          if ($LASTEXITCODE -ne 0) { throw "Could not trust test certificate in TrustedPublisher." }
+
+          & pnputil.exe /add-driver (Join-Path $driver "MUXVirtualDisplay.inf") /install
+          if ($LASTEXITCODE -ne 0) { throw "Could not stage MUX virtual display driver." }
+
+      - name: Create MUX software display device
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD "artifacts/MUX.Virtual/MUX.Virtual.exe"
+          $process = Start-Process -FilePath $exe -ArgumentList "--device-smoke" -Wait -PassThru
+          $log = Join-Path $env:LOCALAPPDATA "MUX/Virtual/device-smoke.log"
+          if (Test-Path $log) {
+            Write-Host "--- MUX device-smoke.log ---"
+            Get-Content $log
+            Write-Host "----------------------------"
+          }
+          if ($process.ExitCode -ne 0) {
+            throw "MUX software-device smoke failed with exit code $($process.ExitCode)."
+          }

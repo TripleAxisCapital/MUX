@@ -150,7 +150,32 @@ public partial class App : Application
             await compositor.StartAsync(activeMonitors);
             File.AppendAllText(DeviceSmokeLogPath,
                 $"{DateTimeOffset.Now:O} LIVE_FRAME_PORTAL_SUCCEEDED: IddCx shared-frame producer and DXGI portal consumer connected.{Environment.NewLine}");
-            await Task.Delay(1000);
+
+            using var visualProbe = new LivePortalVisualSmokeService(activeMonitors[0]);
+            var redSample = await visualProbe.PaintAndSamplePortalAsync(
+                230,
+                24,
+                24,
+                activeMonitors[0].Plan.HostRect);
+            var blueSample = await visualProbe.PaintAndSamplePortalAsync(
+                24,
+                72,
+                230,
+                activeMonitors[0].Plan.HostRect);
+            var colorDistance = LivePortalVisualSmokeService.ColorDistance(redSample, blueSample);
+
+            File.AppendAllText(DeviceSmokeLogPath,
+                $"{DateTimeOffset.Now:O} Live portal visual samples: first={redSample}, second={blueSample}, distance={colorDistance}.{Environment.NewLine}");
+
+            if (colorDistance < 180)
+            {
+                File.AppendAllText(DeviceSmokeLogPath,
+                    $"{DateTimeOffset.Now:O} LIVE_FRAME_VISUAL_UPDATE_FAILED: physical portal did not visibly change after the virtual-monitor test window changed color.{Environment.NewLine}");
+                return 36;
+            }
+
+            File.AppendAllText(DeviceSmokeLogPath,
+                $"{DateTimeOffset.Now:O} LIVE_FRAME_VISUAL_UPDATE_SUCCEEDED: the physical MUX portal changed when the true virtual monitor changed.{Environment.NewLine}");
             return 0;
         }
         catch (Exception ex)

@@ -1,6 +1,6 @@
 # MUX Virtual Displays
 
-MUX Virtual Displays is the **Option B** edition of MUX. It keeps the existing MUX Standard application intact and adds a second Windows application backed by a real Indirect Display Driver (IddCx).
+MUX Virtual Displays is the **Option B** edition of MUX. It keeps MUX Standard intact and adds a second Windows application backed by a real Indirect Display Driver (IddCx).
 
 ## What changes
 
@@ -13,83 +13,90 @@ That means normal Windows monitor semantics apply:
 - **Maximize** uses the MUX virtual monitor bounds.
 - Browser **F11** uses the MUX virtual monitor bounds.
 - `MonitorFromWindow`, `GetMonitorInfo`, display topology APIs, and normal per-monitor DPI logic see a real monitor.
-- Applications no longer need the Standard edition's maximize/fullscreen interception to understand MUX monitor boundaries.
+- Applications no longer need Standard's maximize/fullscreen interception to understand MUX monitor boundaries.
 
-## Why the compositor exists
+## Live compositor architecture
 
-Windows does not allow two desktop display sources to occupy overlapping desktop coordinates. A true virtual monitor therefore cannot occupy the exact same desktop coordinates as the physical panel.
+Windows does not allow two desktop display sources to occupy overlapping desktop coordinates. MUX therefore places the real virtual monitors in a contiguous desktop strip outside the physical desktop and creates a click-through portal over each saved MUX rectangle.
 
-MUX solves that by placing the real virtual monitors in a contiguous desktop strip outside the physical desktop and creating a click-through compositor portal over each saved MUX rectangle. The portal displays the corresponding virtual monitor at 1:1 pixel scale.
-
-The result is:
+The portal is **not a screenshot and no longer uses the Magnification API**. The IddCx driver consumes each live DWM swap-chain frame and copies it on the render GPU into a named D3D11 shared texture. `MUX.SwDeviceBridge.dll` opens the matching texture from the controller process and presents it into the physical portal with a DXGI swap chain.
 
 ```text
-Physical display
-┌─────────────────────────────────────────────────────┐
-│  MUX portal A          MUX portal B                 │
-│  ┌──────────────┐      ┌──────────────┐             │
-│  │ real virtual │      │ real virtual │             │
-│  │ monitor A    │      │ monitor B    │             │
-│  └──────────────┘      └──────────────┘             │
-└─────────────────────────────────────────────────────┘
-
-Windows desktop topology
-[ physical display ][ virtual A ][ virtual B ]...
+Windows / DWM
+    ↓
+IddCx swap chain for MUX monitor
+    ↓
+MUXVirtualDisplay.dll
+    ↓  D3D11 CopyResource + keyed mutex
+named shared GPU texture
+    ↓
+MUX.SwDeviceBridge.dll
+    ↓  DXGI swap chain / Present
+physical MUX portal
 ```
 
-The compositor uses the Windows Magnification API as a DWM-backed desktop surface view. MUX does not screenshot the desktop on the CPU.
+Each frame channel is keyed by the saved MUX zone GUID, so the video shown in a physical portal is always paired with the same Windows virtual monitor used for input.
+
+The controller waits for every configured live frame channel to connect during activation. If Windows creates the monitors but a frame channel does not become available, activation fails visibly instead of leaving a frozen portal on screen.
 
 ## Cursor portal
 
-When the cursor enters a visible MUX portal, MUX maps the pointer to the same relative coordinate on the real virtual monitor. A window being dragged follows the pointer onto that Windows monitor.
+When the real pointer enters a physical MUX portal, MUX maps it to the same relative coordinate on the corresponding off-screen Windows monitor. From that point, Windows receives normal mouse input on the true virtual monitor, so clicks, dragging, focus, keyboard input, maximize, and fullscreen behavior apply to the real application on that monitor.
 
-Press:
+Because the system pointer is physically off-screen while it is operating a virtual monitor, the native compositor draws a matching cursor overlay inside the physical portal.
+
+When the pointer crosses out of a virtual monitor, MUX maps it back to the corresponding physical portal edge. Press:
 
 ```text
 Ctrl + Alt + Esc
 ```
 
-to release the pointer back to the physical display and bring the MUX Virtual controller forward.
+to force-release the pointer back to the physical desktop at any time.
 
 Stopping MUX Virtual closes the software-device handle. Windows then removes the temporary virtual display adapter and its monitors.
 
-## Layouts
+## Layouts and editor
 
-The two editions deliberately share:
+Both editions deliberately share:
 
 ```text
 %LOCALAPPDATA%\MUX\state.json
 ```
 
-Create and physically calibrate layouts in MUX Standard. MUX Virtual reads the same display profile, physical diagonal, calibration scale, monitor sizes, and monitor positions, then converts each zone to its exact virtual display resolution using `MUX.Core`.
+MUX Virtual reuses the mature Standard editor components and `MUX.Core` geometry rather than maintaining a second independent sizing implementation. Physical display selection, diagonal/calibration, layouts, monitor add/edit/remove/clone, aspect-ratio controls, edit-on-display, and configurable shortcuts stay consistent between the editions.
 
-This keeps physical sizing identical between both editions.
+Each zone is converted to the exact pixel rectangle required on the calibrated physical panel, and that exact resolution becomes the preferred mode of the true Windows virtual monitor.
 
 ## Driver architecture
 
 ```text
 MUX.Virtual.exe
-  ├─ Reads MUX Standard layout state
-  ├─ Converts zones from inches → exact pixels
-  ├─ Enumerates a temporary software device with SwDeviceCreate
-  ├─ Supplies per-monitor resolution configuration as a custom device property
-  ├─ Places virtual monitors outside the physical desktop
-  ├─ Creates 1:1 compositor portals
-  └─ Runs the mouse portal
+  ├─ Standard-style layout/editor controls
+  ├─ MUX.Core physical geometry
+  ├─ driver setup / certificate flow
+  ├─ SwDevice virtual-adapter lifecycle
+  ├─ Windows display topology
+  ├─ live frame compositor control
+  └─ mouse portal
+
+MUX.SwDeviceBridge.dll
+  ├─ native SwDeviceCreate ABI bridge
+  ├─ D3D11 shared-frame receiver
+  ├─ DXGI portal presentation
+  └─ virtual-cursor overlay
 
 MUXVirtualDisplay.dll
   ├─ UMDF 2 Indirect Display Driver
   ├─ IddCx adapter
-  ├─ Up to 8 monitor connectors
-  ├─ One exact preferred mode per MUX monitor
-  └─ D3D11 swap-chain consumer
+  ├─ up to 8 monitor connectors
+  ├─ exact preferred mode per MUX monitor
+  ├─ IddCx swap-chain consumer
+  └─ named D3D11 shared-frame publisher
 ```
 
-The device is deliberately temporary. If the controller exits, the software device disappears rather than leaving phantom displays attached to Windows.
+The software device is deliberately temporary. If the controller exits, the adapter disappears rather than leaving phantom displays attached to Windows.
 
 ## Build
-
-### Controller + driver package
 
 Requirements:
 
@@ -111,52 +118,36 @@ Output:
 artifacts/MUX-Virtual-win-x64.zip
 ```
 
-The ZIP contains:
+The ZIP contains the self-contained controller, `MUX.SwDeviceBridge.dll`, the complete driver package, the public development test certificate, and this setup document.
 
-```text
-MUX.Virtual.exe
-Driver/
-  MUXVirtualDisplay.inf
-  MUXVirtualDisplay.dll
-  MUXVirtualDisplay.cat
-  MUXVirtualDisplay-TestCertificate.cer
-VIRTUAL-DISPLAYS.md
-```
-
-`MUXVirtualDisplay-TestCertificate.cer` contains only the public certificate from the test signer used for that build. The private signing key is never included in the package. GitHub Actions verifies this before publishing.
-
-GitHub Actions also expands the finished ZIP before publishing and fails the build unless the controller executable, driver DLL, INF, catalog, public test certificate, and setup documentation are all present. This makes the rolling download a validated complete package rather than merely a successful compilation artifact.
+GitHub Actions validates the controller launch, compiles the native bridge, builds the IddCx driver with warnings-as-errors/static analysis, validates package contents, stages the test driver on a Windows runner, and executes the real software-device creation path before refreshing the rolling release.
 
 ## Driver signing
 
-The repository can compile and package the driver in CI. A public retail Windows build still requires the completed driver package to be submitted through Microsoft's Hardware/Partner Center signing process.
+The repository can compile, test-sign, validate, and package the driver in CI. A frictionless retail Windows build still requires the completed driver package to be submitted through Microsoft's Hardware/Partner Center signing process.
 
-The rolling GitHub build is a **development/test-signed package**. When Windows reports that the catalog chain terminates in an untrusted root, selecting **Install driver** in MUX offers to add the included public build certificate to the Local Computer **Trusted Root Certification Authorities** and **Trusted Publishers** stores, then automatically retries `pnputil`.
+The rolling GitHub build is a **development/test-signed package**. When Windows reports that the catalog chain terminates in an untrusted root, selecting **Install driver** in MUX offers to add the included public build certificate to Local Computer **Trusted Root Certification Authorities** and **Trusted Publishers**, then retries `pnputil`.
 
-Only accept that prompt on a machine you control and only for a MUX package you obtained from the official repository. Trusting a certificate changes the machine trust configuration.
+The private signing key is never included in the ZIP.
 
-Some Windows configurations can still require **Test Mode** to load test-signed driver code. MUX deliberately does not disable Secure Boot, change BCD boot security, or reboot the computer automatically. If the trusted development package is still rejected, use a Microsoft production-signed driver for normal installation or configure a dedicated engineering/test machine according to Microsoft's driver-testing guidance.
-
-Do not work around production distribution by permanently disabling Secure Boot or driver-signing enforcement on end-user machines.
+Some Windows configurations can still require **Test Mode** to load test-signed driver code. MUX does not disable Secure Boot, change BCD boot security, or reboot the computer automatically. Use Microsoft production signing for normal public distribution.
 
 ## First use
 
 1. Download **MUX Virtual Displays**.
-2. Extract the ZIP.
+2. Extract the ZIP into a fresh folder.
 3. Start `MUX.Virtual.exe` as administrator.
-4. Select **Install driver**.
-5. If prompted for the development signing certificate, review the warning and choose whether to trust the included public certificate on this machine. MUX retries the install automatically after trust is established.
-6. Select the MUX layout you want.
-7. Select **Activate virtual displays**.
-8. Drag a normal application into one of the MUX portals.
-9. Maximize it or press F11. Windows now treats that application as being on the corresponding real virtual monitor.
-10. Press `Ctrl + Alt + Esc` whenever you want to return the pointer to the physical desktop.
+4. Complete the driver setup prompt if required.
+5. Select or create the MUX layout you want.
+6. Select **Activate virtual displays**.
+7. Wait for MUX to confirm the live portals are connected.
+8. Move the pointer into a portal and use the Windows desktop shown there normally.
+9. Maximize or press F11; Windows constrains the application to that true virtual monitor.
+10. Press `Ctrl + Alt + Esc` whenever you want to force-release the pointer.
 11. Select **Stop** to remove the temporary virtual monitors.
 
 ## Current scope
 
-This is the native virtual-monitor architecture, not another maximize hook.
+This is the native true-monitor architecture, not another maximize hook. The runtime path is now:
 
-The first implementation intentionally keeps the existing Standard layout editor as the source of truth for physical sizing and layout editing. That prevents two independent geometry implementations from drifting apart and keeps both downloads interoperable.
-
-Future work can move the same editor UI directly into the Virtual edition without changing the driver protocol or `MUX.Core` geometry.
+**real Windows monitor semantics + live IddCx frames + GPU portal presentation + mapped input.**

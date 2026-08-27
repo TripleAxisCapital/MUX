@@ -57,10 +57,8 @@ public partial class App : Application
     {
         Directory.CreateDirectory(LogRoot);
         File.WriteAllText(DeviceSmokeLogPath,
-            $"{DateTimeOffset.Now:O} Starting software-device differential smoke test.{Environment.NewLine}");
+            $"{DateTimeOffset.Now:O} Starting software-device and live-frame smoke test.{Environment.NewLine}");
 
-        // Control test first: this has no display driver and no DriverRequired flag. It proves
-        // that our C# structure layout, callback and SwDeviceCreate P/Invoke are correct.
         try
         {
             using var apiProbe = new VirtualDeviceService();
@@ -95,11 +93,6 @@ public partial class App : Application
                 $"{DateTimeOffset.Now:O} MINIMAL_MICROSOFT_SHAPE_FAILED{Environment.NewLine}{ex}{Environment.NewLine}");
             LogException("Device smoke minimal Microsoft shape", ex);
 
-            // GitHub's hosted x64 Windows runner is Windows Server, not a Windows 11 desktop
-            // machine. If the generic Software Device API control probe succeeded but the
-            // exact Microsoft IddCx sample shape is rejected with ERROR_MOD_NOT_FOUND, the
-            // runner cannot exercise the display-driver stack. We keep this escape hatch CI-
-            // only; real Windows test machines do not set it and still fail hard.
             var allowHostedLimitation = string.Equals(
                 Environment.GetEnvironmentVariable("MUX_ALLOW_IDDCX_HOST_LIMITATION"),
                 "1",
@@ -116,31 +109,56 @@ public partial class App : Application
             return 32;
         }
 
+        using var service = new VirtualDeviceService();
+        var plan = new VirtualMonitorPlan(
+            Guid.Parse("38E109C4-31B0-4FC8-9D8B-5BBE4051DF86"),
+            "MUX CI Smoke Monitor",
+            new ScreenRect(40, 40, 640, 360),
+            640,
+            360,
+            60);
+
+        IReadOnlyList<ActiveVirtualMonitor> activeMonitors;
         try
         {
-            using var service = new VirtualDeviceService();
-            var plan = new VirtualMonitorPlan(
-                Guid.Parse("38E109C4-31B0-4FC8-9D8B-5BBE4051DF86"),
-                "MUX CI Smoke Monitor",
-                new ScreenRect(0, 0, 1280, 720),
-                1280,
-                720,
-                60);
-
             File.AppendAllText(DeviceSmokeLogPath,
                 $"{DateTimeOffset.Now:O} Trying MUX configured software-device shape...{Environment.NewLine}");
             await service.CreateAsync(new[] { plan });
             File.AppendAllText(DeviceSmokeLogPath,
                 $"{DateTimeOffset.Now:O} MUX configured device created successfully. Instance: {service.DeviceInstanceId}{Environment.NewLine}");
-            await Task.Delay(1200);
-            return 0;
+
+            File.AppendAllText(DeviceSmokeLogPath,
+                $"{DateTimeOffset.Now:O} Attaching configured MUX monitor to Windows desktop topology...{Environment.NewLine}");
+            var topology = new DisplayTopologyService();
+            activeMonitors = await topology.ConfigureAsync(new[] { plan });
+            File.AppendAllText(DeviceSmokeLogPath,
+                $"{DateTimeOffset.Now:O} MUX desktop topology attached successfully at {activeMonitors[0].VirtualRect.Left},{activeMonitors[0].VirtualRect.Top} {activeMonitors[0].VirtualRect.Width}x{activeMonitors[0].VirtualRect.Height}.{Environment.NewLine}");
         }
         catch (Exception ex)
         {
             File.AppendAllText(DeviceSmokeLogPath,
                 $"{DateTimeOffset.Now:O} MUX_CONFIGURED_SHAPE_FAILED{Environment.NewLine}{ex}{Environment.NewLine}");
-            LogException("Device smoke configured MUX shape", ex);
+            LogException("Device smoke configured MUX shape/topology", ex);
             return 33;
+        }
+
+        try
+        {
+            using var compositor = new SharedFrameCompositorService();
+            File.AppendAllText(DeviceSmokeLogPath,
+                $"{DateTimeOffset.Now:O} Waiting for real IddCx swap-chain frames and live GPU portal connection...{Environment.NewLine}");
+            await compositor.StartAsync(activeMonitors);
+            File.AppendAllText(DeviceSmokeLogPath,
+                $"{DateTimeOffset.Now:O} LIVE_FRAME_PORTAL_SUCCEEDED: IddCx shared-frame producer and DXGI portal consumer connected.{Environment.NewLine}");
+            await Task.Delay(1000);
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            File.AppendAllText(DeviceSmokeLogPath,
+                $"{DateTimeOffset.Now:O} LIVE_FRAME_PORTAL_FAILED{Environment.NewLine}{ex}{Environment.NewLine}");
+            LogException("Live frame portal smoke", ex);
+            return 35;
         }
     }
 

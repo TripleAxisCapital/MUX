@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <memory>
 #include <new>
+#include <string>
 #include <vector>
 #include <utility>
 
@@ -72,12 +73,12 @@ public:
     HRESULT Initialize();
 
     Microsoft::WRL::ComPtr<ID3D11Device> Device;
+    Microsoft::WRL::ComPtr<ID3D11DeviceContext> Context;
 
 private:
     LUID m_adapterLuid{};
     Microsoft::WRL::ComPtr<IDXGIFactory4> m_factory;
     Microsoft::WRL::ComPtr<IDXGIAdapter> m_adapter;
-    Microsoft::WRL::ComPtr<ID3D11DeviceContext> m_context;
 };
 
 class SwapChainProcessor
@@ -86,19 +87,26 @@ public:
     SwapChainProcessor(
         IDDCX_SWAPCHAIN swapChain,
         std::shared_ptr<Direct3DDevice> device,
-        HANDLE availableBufferEvent);
+        HANDLE availableBufferEvent,
+        const MuxMonitorConfig& config);
 
     ~SwapChainProcessor();
 
 private:
     static DWORD WINAPI ThreadEntry(LPVOID argument);
     void Run();
+    HRESULT EnsureSharedFrameTexture(ID3D11Texture2D* source);
+    void ResetSharedFrameTexture();
 
     IDDCX_SWAPCHAIN m_swapChain = nullptr;
     std::shared_ptr<Direct3DDevice> m_device;
     HANDLE m_availableBufferEvent = nullptr;
     HANDLE m_terminateEvent = nullptr;
     HANDLE m_thread = nullptr;
+    MuxMonitorConfig m_config{};
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> m_sharedTexture;
+    Microsoft::WRL::ComPtr<IDXGIKeyedMutex> m_sharedMutex;
+    HANDLE m_sharedHandle = nullptr;
 };
 
 struct MonitorContext

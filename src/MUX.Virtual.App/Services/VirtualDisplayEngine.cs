@@ -27,7 +27,7 @@ public sealed class VirtualActivationException : Exception
         VirtualActivationStage.DriverSetup => "Preparing the MUX virtual-display driver",
         VirtualActivationStage.SoftwareDevice => "Creating the Windows virtual-display device",
         VirtualActivationStage.DisplayTopology => "Attaching the Windows virtual monitors",
-        VirtualActivationStage.Compositor => "Starting the physical MUX monitor portals",
+        VirtualActivationStage.Compositor => "Starting the live physical MUX monitor portals",
         VirtualActivationStage.InputPortal => "Starting virtual-monitor input routing",
         _ => "MUX Virtual activation"
     };
@@ -38,7 +38,7 @@ public sealed class VirtualDisplayEngine : IDisposable
     private readonly DriverPackageService _driver = new();
     private readonly VirtualDeviceService _device = new();
     private readonly DisplayTopologyService _topology = new();
-    private readonly MagnifierCompositorService _compositor = new();
+    private readonly SharedFrameCompositorService _compositor = new();
     private readonly MousePortalService _portal = new();
 
     public bool IsRunning { get; private set; }
@@ -54,12 +54,6 @@ public sealed class VirtualDisplayEngine : IDisposable
 
         try
         {
-            // Activation is intentionally self-preparing. A user must never have to know
-            // that "Install driver" has to be pressed before "Activate". For the rolling
-            // development package, MainWindow already requires Windows Test Mode before
-            // reaching this point. Once the user explicitly activates MUX Virtual, stage
-            // the bundled driver and, if Windows rejects the WDK test certificate, trust
-            // only that bundled public certificate and retry.
             try
             {
                 var install = await _driver.InstallAsync(allowTestCertificateTrust: true);
@@ -93,7 +87,7 @@ public sealed class VirtualDisplayEngine : IDisposable
 
             try
             {
-                _compositor.Start(ActiveMonitors);
+                await _compositor.StartAsync(ActiveMonitors, cancellationToken);
             }
             catch (Exception ex)
             {

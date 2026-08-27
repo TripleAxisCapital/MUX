@@ -1,5 +1,8 @@
 #define INITGUID
 #include "Driver.h"
+#include <sddl.h>
+
+#pragma comment(lib, "advapi32.lib")
 
 using Microsoft::WRL::ComPtr;
 
@@ -11,6 +14,20 @@ DEFINE_DEVPROPKEY(
 
 namespace
 {
+    std::wstring SharedFrameName(const GUID& id)
+    {
+        wchar_t buffer[128]{};
+        swprintf_s(
+            buffer,
+            L"Global\\MUX.Virtual.Frame.%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X",
+            id.Data1,
+            id.Data2,
+            id.Data3,
+            id.Data4[0], id.Data4[1],
+            id.Data4[2], id.Data4[3], id.Data4[4], id.Data4[5], id.Data4[6], id.Data4[7]);
+        return buffer;
+    }
+
     IDDCX_MONITOR_MODE CreateMonitorMode(
         UINT width,
         UINT height,
@@ -49,9 +66,7 @@ namespace
         IDDCX_TARGET_MODE mode{};
         mode.Size = sizeof(mode);
 
-        auto& signal =
-            mode.TargetVideoSignalInfo.targetVideoSignalInfo;
-
+        auto& signal = mode.TargetVideoSignalInfo.targetVideoSignalInfo;
         signal.totalSize.cx = width;
         signal.totalSize.cy = height;
         signal.activeSize.cx = width;
@@ -73,24 +88,19 @@ namespace
 
     void DeviceCleanup(WDFOBJECT object)
     {
-        auto* wrapper =
-            GetDeviceContextWrapper(object);
-
+        auto* wrapper = GetDeviceContextWrapper(object);
         delete wrapper->Context;
         wrapper->Context = nullptr;
     }
 
     void MonitorCleanup(WDFOBJECT object)
     {
-        auto* wrapper =
-            GetMonitorContextWrapper(object);
-
+        auto* wrapper = GetMonitorContextWrapper(object);
         delete wrapper->Context;
         wrapper->Context = nullptr;
     }
 
-    void SetFallbackConfiguration(
-        MuxVirtualConfig& config)
+    void SetFallbackConfiguration(MuxVirtualConfig& config)
     {
         ZeroMemory(&config, sizeof(config));
         config.Version = MUX_CONFIG_VERSION;
@@ -104,15 +114,11 @@ namespace
             0x664b24a0, 0x5c8a, 0x4e31,
             { 0xa9, 0xb2, 0x30, 0x2c, 0x81, 0xcd, 0x0b, 0x3a }
         };
-
         config.Monitors[0].ContainerId = fallbackId;
     }
 }
 
-extern "C" BOOL WINAPI DllMain(
-    HINSTANCE instance,
-    UINT reason,
-    LPVOID reserved)
+extern "C" BOOL WINAPI DllMain(HINSTANCE instance, UINT reason, LPVOID reserved)
 {
     UNREFERENCED_PARAMETER(instance);
     UNREFERENCED_PARAMETER(reason);
@@ -121,14 +127,10 @@ extern "C" BOOL WINAPI DllMain(
 }
 
 _Use_decl_annotations_
-extern "C" NTSTATUS DriverEntry(
-    PDRIVER_OBJECT driverObject,
-    PUNICODE_STRING registryPath)
+extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT driverObject, PUNICODE_STRING registryPath)
 {
     WDF_DRIVER_CONFIG config;
-    WDF_DRIVER_CONFIG_INIT(
-        &config,
-        MuxDeviceAdd);
+    WDF_DRIVER_CONFIG_INIT(&config, MuxDeviceAdd);
 
     WDF_OBJECT_ATTRIBUTES attributes;
     WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
@@ -142,61 +144,37 @@ extern "C" NTSTATUS DriverEntry(
 }
 
 _Use_decl_annotations_
-NTSTATUS MuxDeviceAdd(
-    WDFDRIVER driver,
-    PWDFDEVICE_INIT deviceInit)
+NTSTATUS MuxDeviceAdd(WDFDRIVER driver, PWDFDEVICE_INIT deviceInit)
 {
     UNREFERENCED_PARAMETER(driver);
 
     WDF_PNPPOWER_EVENT_CALLBACKS powerCallbacks;
     WDF_PNPPOWER_EVENT_CALLBACKS_INIT(&powerCallbacks);
     powerCallbacks.EvtDeviceD0Entry = MuxDeviceD0Entry;
-    WdfDeviceInitSetPnpPowerEventCallbacks(
-        deviceInit,
-        &powerCallbacks);
+    WdfDeviceInitSetPnpPowerEventCallbacks(deviceInit, &powerCallbacks);
 
     IDD_CX_CLIENT_CONFIG iddConfig;
     IDD_CX_CLIENT_CONFIG_INIT(&iddConfig);
+    iddConfig.EvtIddCxAdapterInitFinished = MuxAdapterInitFinished;
+    iddConfig.EvtIddCxAdapterCommitModes = MuxAdapterCommitModes;
+    iddConfig.EvtIddCxParseMonitorDescription = MuxParseMonitorDescription;
+    iddConfig.EvtIddCxMonitorGetDefaultDescriptionModes = MuxMonitorGetDefaultModes;
+    iddConfig.EvtIddCxMonitorQueryTargetModes = MuxMonitorQueryTargetModes;
+    iddConfig.EvtIddCxMonitorAssignSwapChain = MuxMonitorAssignSwapChain;
+    iddConfig.EvtIddCxMonitorUnassignSwapChain = MuxMonitorUnassignSwapChain;
 
-    iddConfig.EvtIddCxAdapterInitFinished =
-        MuxAdapterInitFinished;
-    iddConfig.EvtIddCxAdapterCommitModes =
-        MuxAdapterCommitModes;
-    iddConfig.EvtIddCxParseMonitorDescription =
-        MuxParseMonitorDescription;
-    iddConfig.EvtIddCxMonitorGetDefaultDescriptionModes =
-        MuxMonitorGetDefaultModes;
-    iddConfig.EvtIddCxMonitorQueryTargetModes =
-        MuxMonitorQueryTargetModes;
-    iddConfig.EvtIddCxMonitorAssignSwapChain =
-        MuxMonitorAssignSwapChain;
-    iddConfig.EvtIddCxMonitorUnassignSwapChain =
-        MuxMonitorUnassignSwapChain;
-
-    NTSTATUS status =
-        IddCxDeviceInitConfig(
-            deviceInit,
-            &iddConfig);
-
+    NTSTATUS status = IddCxDeviceInitConfig(deviceInit, &iddConfig);
     if (!NT_SUCCESS(status))
     {
         return status;
     }
 
     WDF_OBJECT_ATTRIBUTES attributes;
-    WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(
-        &attributes,
-        DeviceContextWrapper);
-
-    attributes.EvtCleanupCallback =
-        DeviceCleanup;
+    WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&attributes, DeviceContextWrapper);
+    attributes.EvtCleanupCallback = DeviceCleanup;
 
     WDFDEVICE device = nullptr;
-    status = WdfDeviceCreate(
-        &deviceInit,
-        &attributes,
-        &device);
-
+    status = WdfDeviceCreate(&deviceInit, &attributes, &device);
     if (!NT_SUCCESS(status))
     {
         return status;
@@ -208,12 +186,8 @@ NTSTATUS MuxDeviceAdd(
         return status;
     }
 
-    auto* wrapper =
-        GetDeviceContextWrapper(device);
-
-    wrapper->Context =
-        new (std::nothrow) DeviceContext(device);
-
+    auto* wrapper = GetDeviceContextWrapper(device);
+    wrapper->Context = new (std::nothrow) DeviceContext(device);
     if (wrapper->Context == nullptr)
     {
         return STATUS_INSUFFICIENT_RESOURCES;
@@ -223,17 +197,12 @@ NTSTATUS MuxDeviceAdd(
 }
 
 _Use_decl_annotations_
-NTSTATUS MuxDeviceD0Entry(
-    WDFDEVICE device,
-    WDF_POWER_DEVICE_STATE previousState)
+NTSTATUS MuxDeviceD0Entry(WDFDEVICE device, WDF_POWER_DEVICE_STATE previousState)
 {
     UNREFERENCED_PARAMETER(previousState);
 
-    auto* wrapper =
-        GetDeviceContextWrapper(device);
-
-    if (wrapper == nullptr ||
-        wrapper->Context == nullptr)
+    auto* wrapper = GetDeviceContextWrapper(device);
+    if (wrapper == nullptr || wrapper->Context == nullptr)
     {
         return STATUS_INVALID_DEVICE_STATE;
     }
@@ -242,28 +211,20 @@ NTSTATUS MuxDeviceD0Entry(
     return STATUS_SUCCESS;
 }
 
-Direct3DDevice::Direct3DDevice(
-    LUID adapterLuid)
+Direct3DDevice::Direct3DDevice(LUID adapterLuid)
     : m_adapterLuid(adapterLuid)
 {
 }
 
 HRESULT Direct3DDevice::Initialize()
 {
-    HRESULT hr =
-        CreateDXGIFactory2(
-            0,
-            IID_PPV_ARGS(&m_factory));
-
+    HRESULT hr = CreateDXGIFactory2(0, IID_PPV_ARGS(&m_factory));
     if (FAILED(hr))
     {
         return hr;
     }
 
-    hr = m_factory->EnumAdapterByLuid(
-        m_adapterLuid,
-        IID_PPV_ARGS(&m_adapter));
-
+    hr = m_factory->EnumAdapterByLuid(m_adapterLuid, IID_PPV_ARGS(&m_adapter));
     if (FAILED(hr))
     {
         return hr;
@@ -279,34 +240,23 @@ HRESULT Direct3DDevice::Initialize()
         D3D11_SDK_VERSION,
         &Device,
         nullptr,
-        &m_context);
+        &Context);
 }
 
 SwapChainProcessor::SwapChainProcessor(
     IDDCX_SWAPCHAIN swapChain,
     std::shared_ptr<Direct3DDevice> device,
-    HANDLE availableBufferEvent)
+    HANDLE availableBufferEvent,
+    const MuxMonitorConfig& config)
     : m_swapChain(swapChain),
       m_device(std::move(device)),
-      m_availableBufferEvent(availableBufferEvent)
+      m_availableBufferEvent(availableBufferEvent),
+      m_config(config)
 {
-    m_terminateEvent =
-        CreateEvent(
-            nullptr,
-            FALSE,
-            FALSE,
-            nullptr);
-
+    m_terminateEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
     if (m_terminateEvent != nullptr)
     {
-        m_thread =
-            CreateThread(
-                nullptr,
-                0,
-                ThreadEntry,
-                this,
-                0,
-                nullptr);
+        m_thread = CreateThread(nullptr, 0, ThreadEntry, this, 0, nullptr);
     }
 }
 
@@ -319,12 +269,12 @@ SwapChainProcessor::~SwapChainProcessor()
 
     if (m_thread != nullptr)
     {
-        WaitForSingleObject(
-            m_thread,
-            INFINITE);
+        WaitForSingleObject(m_thread, INFINITE);
         CloseHandle(m_thread);
         m_thread = nullptr;
     }
+
+    ResetSharedFrameTexture();
 
     if (m_terminateEvent != nullptr)
     {
@@ -333,8 +283,112 @@ SwapChainProcessor::~SwapChainProcessor()
     }
 }
 
-DWORD WINAPI SwapChainProcessor::ThreadEntry(
-    LPVOID argument)
+void SwapChainProcessor::ResetSharedFrameTexture()
+{
+    m_sharedMutex.Reset();
+    m_sharedTexture.Reset();
+    if (m_sharedHandle != nullptr)
+    {
+        CloseHandle(m_sharedHandle);
+        m_sharedHandle = nullptr;
+    }
+}
+
+HRESULT SwapChainProcessor::EnsureSharedFrameTexture(ID3D11Texture2D* source)
+{
+    if (source == nullptr)
+    {
+        return E_INVALIDARG;
+    }
+
+    D3D11_TEXTURE2D_DESC sourceDesc{};
+    source->GetDesc(&sourceDesc);
+
+    if (m_sharedTexture.Get() != nullptr)
+    {
+        D3D11_TEXTURE2D_DESC sharedDesc{};
+        m_sharedTexture->GetDesc(&sharedDesc);
+        if (sharedDesc.Width == sourceDesc.Width &&
+            sharedDesc.Height == sourceDesc.Height &&
+            sharedDesc.Format == sourceDesc.Format &&
+            sharedDesc.MipLevels == sourceDesc.MipLevels &&
+            sharedDesc.ArraySize == sourceDesc.ArraySize &&
+            sharedDesc.SampleDesc.Count == sourceDesc.SampleDesc.Count)
+        {
+            return S_OK;
+        }
+
+        ResetSharedFrameTexture();
+    }
+
+    D3D11_TEXTURE2D_DESC sharedDesc = sourceDesc;
+    sharedDesc.Usage = D3D11_USAGE_DEFAULT;
+    sharedDesc.BindFlags = 0;
+    sharedDesc.CPUAccessFlags = 0;
+    sharedDesc.MiscFlags =
+        D3D11_RESOURCE_MISC_SHARED_NTHANDLE |
+        D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
+
+    HRESULT hr = m_device->Device->CreateTexture2D(
+        &sharedDesc,
+        nullptr,
+        &m_sharedTexture);
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+
+    hr = m_sharedTexture.As(&m_sharedMutex);
+    if (FAILED(hr))
+    {
+        ResetSharedFrameTexture();
+        return hr;
+    }
+
+    ComPtr<IDXGIResource1> resource;
+    hr = m_sharedTexture.As(&resource);
+    if (FAILED(hr))
+    {
+        ResetSharedFrameTexture();
+        return hr;
+    }
+
+    const std::wstring name = SharedFrameName(m_config.ContainerId);
+
+    PSECURITY_DESCRIPTOR securityDescriptor = nullptr;
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            L"D:P(A;;GA;;;SY)(A;;GR;;;BA)",
+            SDDL_REVISION_1,
+            &securityDescriptor,
+            nullptr))
+    {
+        ResetSharedFrameTexture();
+        return HRESULT_FROM_WIN32(GetLastError());
+    }
+
+    SECURITY_ATTRIBUTES securityAttributes{};
+    securityAttributes.nLength = sizeof(securityAttributes);
+    securityAttributes.lpSecurityDescriptor = securityDescriptor;
+    securityAttributes.bInheritHandle = FALSE;
+
+    hr = resource->CreateSharedHandle(
+        &securityAttributes,
+        DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE,
+        name.c_str(),
+        &m_sharedHandle);
+
+    LocalFree(securityDescriptor);
+
+    if (FAILED(hr))
+    {
+        ResetSharedFrameTexture();
+        return hr;
+    }
+
+    return S_OK;
+}
+
+DWORD WINAPI SwapChainProcessor::ThreadEntry(LPVOID argument)
 {
     reinterpret_cast<SwapChainProcessor*>(argument)->Run();
     return 0;
@@ -343,54 +397,36 @@ DWORD WINAPI SwapChainProcessor::ThreadEntry(
 void SwapChainProcessor::Run()
 {
     DWORD taskIndex = 0;
-    HANDLE mmcss =
-        AvSetMmThreadCharacteristicsW(
-            L"Distribution",
-            &taskIndex);
+    HANDLE mmcss = AvSetMmThreadCharacteristicsW(L"Distribution", &taskIndex);
 
     ComPtr<IDXGIDevice> dxgiDevice;
-    HRESULT hr =
-        m_device->Device.As(&dxgiDevice);
-
+    HRESULT hr = m_device->Device.As(&dxgiDevice);
     if (SUCCEEDED(hr))
     {
         IDARG_IN_SWAPCHAINSETDEVICE setDevice{};
         setDevice.pDevice = dxgiDevice.Get();
-
-        hr = IddCxSwapChainSetDevice(
-            m_swapChain,
-            &setDevice);
+        hr = IddCxSwapChainSetDevice(m_swapChain, &setDevice);
     }
 
     while (SUCCEEDED(hr))
     {
         IDARG_OUT_RELEASEANDACQUIREBUFFER buffer{};
-        hr = IddCxSwapChainReleaseAndAcquireBuffer(
-            m_swapChain,
-            &buffer);
+        hr = IddCxSwapChainReleaseAndAcquireBuffer(m_swapChain, &buffer);
 
         if (hr == E_PENDING)
         {
-            HANDLE waitHandles[] =
-            {
-                m_availableBufferEvent,
-                m_terminateEvent
-            };
+            HANDLE waitHandles[] = { m_availableBufferEvent, m_terminateEvent };
+            const DWORD wait = WaitForMultipleObjects(
+                ARRAYSIZE(waitHandles),
+                waitHandles,
+                FALSE,
+                16);
 
-            const DWORD wait =
-                WaitForMultipleObjects(
-                    ARRAYSIZE(waitHandles),
-                    waitHandles,
-                    FALSE,
-                    16);
-
-            if (wait == WAIT_OBJECT_0 ||
-                wait == WAIT_TIMEOUT)
+            if (wait == WAIT_OBJECT_0 || wait == WAIT_TIMEOUT)
             {
                 hr = S_OK;
                 continue;
             }
-
             if (wait == WAIT_OBJECT_0 + 1)
             {
                 break;
@@ -404,17 +440,35 @@ void SwapChainProcessor::Run()
         {
             ComPtr<IDXGIResource> acquired;
             acquired.Attach(buffer.MetaData.pSurface);
-            acquired.Reset();
 
-            hr =
-                IddCxSwapChainFinishedProcessingFrame(
-                    m_swapChain);
+            ComPtr<ID3D11Texture2D> source;
+            const HRESULT sourceHr = acquired.As(&source);
+            if (SUCCEEDED(sourceHr) && SUCCEEDED(EnsureSharedFrameTexture(source.Get())))
+            {
+                const HRESULT syncHr = m_sharedMutex->AcquireSync(0, 0);
+                if (syncHr == S_OK)
+                {
+                    m_device->Context->CopyResource(m_sharedTexture.Get(), source.Get());
+                    const HRESULT releaseHr = m_sharedMutex->ReleaseSync(1);
+                    if (FAILED(releaseHr))
+                    {
+                        ResetSharedFrameTexture();
+                    }
+                }
+                else if (syncHr != WAIT_TIMEOUT && syncHr != DXGI_ERROR_WAIT_TIMEOUT)
+                {
+                    ResetSharedFrameTexture();
+                }
+            }
+
+            acquired.Reset();
+            hr = IddCxSwapChainFinishedProcessingFrame(m_swapChain);
         }
     }
 
-    WdfObjectDelete(
-        reinterpret_cast<WDFOBJECT>(m_swapChain));
+    ResetSharedFrameTexture();
 
+    WdfObjectDelete(reinterpret_cast<WDFOBJECT>(m_swapChain));
     m_swapChain = nullptr;
 
     if (mmcss != nullptr)
@@ -423,9 +477,7 @@ void SwapChainProcessor::Run()
     }
 }
 
-MonitorContext::MonitorContext(
-    IDDCX_MONITOR monitor,
-    const MuxMonitorConfig& config)
+MonitorContext::MonitorContext(IDDCX_MONITOR monitor, const MuxMonitorConfig& config)
     : Monitor(monitor),
       Config(config)
 {
@@ -443,22 +495,18 @@ void MonitorContext::AssignSwapChain(
 {
     Processor.reset();
 
-    auto device =
-        std::make_shared<Direct3DDevice>(
-            renderAdapter);
-
+    auto device = std::make_shared<Direct3DDevice>(renderAdapter);
     if (FAILED(device->Initialize()))
     {
-        WdfObjectDelete(
-            reinterpret_cast<WDFOBJECT>(swapChain));
+        WdfObjectDelete(reinterpret_cast<WDFOBJECT>(swapChain));
         return;
     }
 
-    Processor =
-        std::make_unique<SwapChainProcessor>(
-            swapChain,
-            std::move(device),
-            availableBufferEvent);
+    Processor = std::make_unique<SwapChainProcessor>(
+        swapChain,
+        std::move(device),
+        availableBufferEvent,
+        Config);
 }
 
 void MonitorContext::UnassignSwapChain()
@@ -466,8 +514,7 @@ void MonitorContext::UnassignSwapChain()
     Processor.reset();
 }
 
-DeviceContext::DeviceContext(
-    WDFDEVICE device)
+DeviceContext::DeviceContext(WDFDEVICE device)
     : Device(device)
 {
     LoadConfiguration();
@@ -478,22 +525,19 @@ void DeviceContext::LoadConfiguration()
     SetFallbackConfiguration(Config);
 
     WDF_DEVICE_PROPERTY_DATA propertyData;
-    WDF_DEVICE_PROPERTY_DATA_INIT(
-        &propertyData,
-        &DEVPKEY_MUX_VIRTUAL_CONFIG);
+    WDF_DEVICE_PROPERTY_DATA_INIT(&propertyData, &DEVPKEY_MUX_VIRTUAL_CONFIG);
 
     ULONG requiredSize = 0;
     DEVPROPTYPE propertyType = DEVPROP_TYPE_EMPTY;
     MuxVirtualConfig incoming{};
 
-    const NTSTATUS status =
-        WdfDeviceQueryPropertyEx(
-            Device,
-            &propertyData,
-            sizeof(incoming),
-            &incoming,
-            &requiredSize,
-            &propertyType);
+    const NTSTATUS status = WdfDeviceQueryPropertyEx(
+        Device,
+        &propertyData,
+        sizeof(incoming),
+        &incoming,
+        &requiredSize,
+        &propertyType);
 
     if (!NT_SUCCESS(status) ||
         propertyType != DEVPROP_TYPE_BINARY ||
@@ -507,9 +551,7 @@ void DeviceContext::LoadConfiguration()
 
     for (UINT i = 0; i < incoming.MonitorCount; ++i)
     {
-        const auto& monitor =
-            incoming.Monitors[i];
-
+        const auto& monitor = incoming.Monitors[i];
         if (monitor.Width < 320 ||
             monitor.Height < 200 ||
             monitor.RefreshRate < 24 ||
@@ -526,137 +568,86 @@ void DeviceContext::InitializeAdapter()
 {
     IDDCX_ADAPTER_CAPS caps{};
     caps.Size = sizeof(caps);
-    caps.MaxMonitorsSupported =
-        Config.MonitorCount;
+    caps.MaxMonitorsSupported = Config.MonitorCount;
 
-    caps.EndPointDiagnostics.Size =
-        sizeof(caps.EndPointDiagnostics);
-    caps.EndPointDiagnostics.GammaSupport =
-        IDDCX_FEATURE_IMPLEMENTATION_NONE;
-    caps.EndPointDiagnostics.TransmissionType =
-        IDDCX_TRANSMISSION_TYPE_WIRED_OTHER;
-    caps.EndPointDiagnostics.pEndPointFriendlyName =
-        L"MUX Virtual Displays";
-    caps.EndPointDiagnostics.pEndPointManufacturerName =
-        L"Triple Axis Capital";
-    caps.EndPointDiagnostics.pEndPointModelName =
-        L"MUX Virtual Display";
+    caps.EndPointDiagnostics.Size = sizeof(caps.EndPointDiagnostics);
+    caps.EndPointDiagnostics.GammaSupport = IDDCX_FEATURE_IMPLEMENTATION_NONE;
+    caps.EndPointDiagnostics.TransmissionType = IDDCX_TRANSMISSION_TYPE_WIRED_OTHER;
+    caps.EndPointDiagnostics.pEndPointFriendlyName = L"MUX Virtual Displays";
+    caps.EndPointDiagnostics.pEndPointManufacturerName = L"Triple Axis Capital";
+    caps.EndPointDiagnostics.pEndPointModelName = L"MUX Virtual Display";
 
     IDDCX_ENDPOINT_VERSION version{};
     version.Size = sizeof(version);
     version.MajorVer = 1;
     version.MinorVer = 0;
-
-    caps.EndPointDiagnostics.pFirmwareVersion =
-        &version;
-    caps.EndPointDiagnostics.pHardwareVersion =
-        &version;
+    caps.EndPointDiagnostics.pFirmwareVersion = &version;
+    caps.EndPointDiagnostics.pHardwareVersion = &version;
 
     WDF_OBJECT_ATTRIBUTES adapterAttributes;
-    WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(
-        &adapterAttributes,
-        DeviceContextWrapper);
+    WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&adapterAttributes, DeviceContextWrapper);
 
     IDARG_IN_ADAPTER_INIT input{};
     input.WdfDevice = Device;
     input.pCaps = &caps;
-    input.ObjectAttributes =
-        &adapterAttributes;
+    input.ObjectAttributes = &adapterAttributes;
 
     IDARG_OUT_ADAPTER_INIT output{};
-    const NTSTATUS status =
-        IddCxAdapterInitAsync(
-            &input,
-            &output);
-
+    const NTSTATUS status = IddCxAdapterInitAsync(&input, &output);
     if (!NT_SUCCESS(status))
     {
         return;
     }
 
     Adapter = output.AdapterObject;
-
-    auto* wrapper =
-        GetDeviceContextWrapper(
-            output.AdapterObject);
-
+    auto* wrapper = GetDeviceContextWrapper(output.AdapterObject);
     wrapper->Context = this;
 }
 
-void DeviceContext::FinishMonitor(
-    UINT connectorIndex)
+void DeviceContext::FinishMonitor(UINT connectorIndex)
 {
     if (connectorIndex >= Config.MonitorCount)
     {
         return;
     }
 
-    const auto& config =
-        Config.Monitors[connectorIndex];
+    const auto& config = Config.Monitors[connectorIndex];
 
     WDF_OBJECT_ATTRIBUTES monitorAttributes;
-    WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(
-        &monitorAttributes,
-        MonitorContextWrapper);
-
-    monitorAttributes.EvtCleanupCallback =
-        MonitorCleanup;
+    WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&monitorAttributes, MonitorContextWrapper);
+    monitorAttributes.EvtCleanupCallback = MonitorCleanup;
 
     IDDCX_MONITOR_INFO info{};
     info.Size = sizeof(info);
-    info.MonitorType =
-        DISPLAYCONFIG_OUTPUT_TECHNOLOGY_OTHER;
-    info.ConnectorIndex =
-        connectorIndex;
-    info.MonitorContainerId =
-        config.ContainerId;
-
-    info.MonitorDescription.Size =
-        sizeof(info.MonitorDescription);
-    info.MonitorDescription.Type =
-        IDDCX_MONITOR_DESCRIPTION_TYPE_EDID;
+    info.MonitorType = DISPLAYCONFIG_OUTPUT_TECHNOLOGY_OTHER;
+    info.ConnectorIndex = connectorIndex;
+    info.MonitorContainerId = config.ContainerId;
+    info.MonitorDescription.Size = sizeof(info.MonitorDescription);
+    info.MonitorDescription.Type = IDDCX_MONITOR_DESCRIPTION_TYPE_EDID;
     info.MonitorDescription.DataSize = 0;
     info.MonitorDescription.pData = nullptr;
 
     IDARG_IN_MONITORCREATE input{};
-    input.ObjectAttributes =
-        &monitorAttributes;
-    input.pMonitorInfo =
-        &info;
+    input.ObjectAttributes = &monitorAttributes;
+    input.pMonitorInfo = &info;
 
     IDARG_OUT_MONITORCREATE output{};
-    NTSTATUS status =
-        IddCxMonitorCreate(
-            Adapter,
-            &input,
-            &output);
-
+    NTSTATUS status = IddCxMonitorCreate(Adapter, &input, &output);
     if (!NT_SUCCESS(status))
     {
         return;
     }
 
-    auto* wrapper =
-        GetMonitorContextWrapper(
-            output.MonitorObject);
-
-    wrapper->Context =
-        new (std::nothrow) MonitorContext(
-            output.MonitorObject,
-            config);
-
+    auto* wrapper = GetMonitorContextWrapper(output.MonitorObject);
+    wrapper->Context = new (std::nothrow) MonitorContext(output.MonitorObject, config);
     if (wrapper->Context == nullptr)
     {
-        WdfObjectDelete(
-            reinterpret_cast<WDFOBJECT>(
-                output.MonitorObject));
+        WdfObjectDelete(reinterpret_cast<WDFOBJECT>(output.MonitorObject));
         return;
     }
 
     IDARG_OUT_MONITORARRIVAL arrival{};
-    IddCxMonitorArrival(
-        output.MonitorObject,
-        &arrival);
+    IddCxMonitorArrival(output.MonitorObject, &arrival);
 }
 
 _Use_decl_annotations_
@@ -664,10 +655,7 @@ NTSTATUS MuxAdapterInitFinished(
     IDDCX_ADAPTER adapterObject,
     const IDARG_IN_ADAPTER_INIT_FINISHED* input)
 {
-    auto* wrapper =
-        GetDeviceContextWrapper(
-            adapterObject);
-
+    auto* wrapper = GetDeviceContextWrapper(adapterObject);
     if (wrapper == nullptr ||
         wrapper->Context == nullptr ||
         !NT_SUCCESS(input->AdapterInitStatus))
@@ -675,9 +663,7 @@ NTSTATUS MuxAdapterInitFinished(
         return STATUS_SUCCESS;
     }
 
-    for (UINT i = 0;
-         i < wrapper->Context->Config.MonitorCount;
-         ++i)
+    for (UINT i = 0; i < wrapper->Context->Config.MonitorCount; ++i)
     {
         wrapper->Context->FinishMonitor(i);
     }
@@ -702,9 +688,6 @@ NTSTATUS MuxParseMonitorDescription(
 {
     UNREFERENCED_PARAMETER(input);
     UNREFERENCED_PARAMETER(output);
-
-    // MUX uses EDID-less software monitors. Their exact mode is supplied by
-    // MuxMonitorGetDefaultModes below.
     return STATUS_INVALID_PARAMETER;
 }
 
@@ -714,39 +697,29 @@ NTSTATUS MuxMonitorGetDefaultModes(
     const IDARG_IN_GETDEFAULTDESCRIPTIONMODES* input,
     IDARG_OUT_GETDEFAULTDESCRIPTIONMODES* output)
 {
-    auto* wrapper =
-        GetMonitorContextWrapper(
-            monitorObject);
-
-    if (wrapper == nullptr ||
-        wrapper->Context == nullptr)
+    auto* wrapper = GetMonitorContextWrapper(monitorObject);
+    if (wrapper == nullptr || wrapper->Context == nullptr)
     {
         return STATUS_INVALID_DEVICE_STATE;
     }
 
     output->DefaultMonitorModeBufferOutputCount = 1;
-
     if (input->DefaultMonitorModeBufferInputCount == 0)
     {
         output->PreferredMonitorModeIdx = 0;
         return STATUS_SUCCESS;
     }
-
     if (input->DefaultMonitorModeBufferInputCount < 1)
     {
         return STATUS_BUFFER_TOO_SMALL;
     }
 
-    const auto& config =
-        wrapper->Context->Config;
-
-    input->pDefaultMonitorModes[0] =
-        CreateMonitorMode(
-            config.Width,
-            config.Height,
-            config.RefreshRate,
-            IDDCX_MONITOR_MODE_ORIGIN_DRIVER);
-
+    const auto& config = wrapper->Context->Config;
+    input->pDefaultMonitorModes[0] = CreateMonitorMode(
+        config.Width,
+        config.Height,
+        config.RefreshRate,
+        IDDCX_MONITOR_MODE_ORIGIN_DRIVER);
     output->PreferredMonitorModeIdx = 0;
     return STATUS_SUCCESS;
 }
@@ -757,37 +730,27 @@ NTSTATUS MuxMonitorQueryTargetModes(
     const IDARG_IN_QUERYTARGETMODES* input,
     IDARG_OUT_QUERYTARGETMODES* output)
 {
-    auto* wrapper =
-        GetMonitorContextWrapper(
-            monitorObject);
-
-    if (wrapper == nullptr ||
-        wrapper->Context == nullptr)
+    auto* wrapper = GetMonitorContextWrapper(monitorObject);
+    if (wrapper == nullptr || wrapper->Context == nullptr)
     {
         return STATUS_INVALID_DEVICE_STATE;
     }
 
     output->TargetModeBufferOutputCount = 1;
-
     if (input->TargetModeBufferInputCount == 0)
     {
         return STATUS_SUCCESS;
     }
-
     if (input->TargetModeBufferInputCount < 1)
     {
         return STATUS_BUFFER_TOO_SMALL;
     }
 
-    const auto& config =
-        wrapper->Context->Config;
-
-    input->pTargetModes[0] =
-        CreateTargetMode(
-            config.Width,
-            config.Height,
-            config.RefreshRate);
-
+    const auto& config = wrapper->Context->Config;
+    input->pTargetModes[0] = CreateTargetMode(
+        config.Width,
+        config.Height,
+        config.RefreshRate);
     return STATUS_SUCCESS;
 }
 
@@ -796,12 +759,8 @@ NTSTATUS MuxMonitorAssignSwapChain(
     IDDCX_MONITOR monitorObject,
     const IDARG_IN_SETSWAPCHAIN* input)
 {
-    auto* wrapper =
-        GetMonitorContextWrapper(
-            monitorObject);
-
-    if (wrapper == nullptr ||
-        wrapper->Context == nullptr)
+    auto* wrapper = GetMonitorContextWrapper(monitorObject);
+    if (wrapper == nullptr || wrapper->Context == nullptr)
     {
         return STATUS_INVALID_DEVICE_STATE;
     }
@@ -810,20 +769,14 @@ NTSTATUS MuxMonitorAssignSwapChain(
         input->hSwapChain,
         input->RenderAdapterLuid,
         input->hNextSurfaceAvailable);
-
     return STATUS_SUCCESS;
 }
 
 _Use_decl_annotations_
-NTSTATUS MuxMonitorUnassignSwapChain(
-    IDDCX_MONITOR monitorObject)
+NTSTATUS MuxMonitorUnassignSwapChain(IDDCX_MONITOR monitorObject)
 {
-    auto* wrapper =
-        GetMonitorContextWrapper(
-            monitorObject);
-
-    if (wrapper == nullptr ||
-        wrapper->Context == nullptr)
+    auto* wrapper = GetMonitorContextWrapper(monitorObject);
+    if (wrapper == nullptr || wrapper->Context == nullptr)
     {
         return STATUS_INVALID_DEVICE_STATE;
     }

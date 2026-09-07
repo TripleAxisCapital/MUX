@@ -29,7 +29,8 @@ public partial class MainWindow
         Loaded += MainWindow_FreeformLoaded;
         Closed += MainWindow_FreeformClosed;
 
-        _captionResizePillService = new CaptionResizePillService();
+        _captionResizePillService = new CaptionResizePillService(
+            () => new DisplaySizingSnapshot(_state.Displays, _state.ActiveDisplayDeviceName));
         _captionResizePillService.Start();
     }
 

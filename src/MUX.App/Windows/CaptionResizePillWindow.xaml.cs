@@ -9,23 +9,26 @@ namespace MUX.App.Windows;
 
 public sealed class CaptionResizeRequestEventArgs : EventArgs
 {
-    public CaptionResizeRequestEventArgs(IntPtr targetHwnd, int width, int height)
+    public CaptionResizeRequestEventArgs(IntPtr targetHwnd, double diagonalInches)
     {
         TargetHwnd = targetHwnd;
-        Width = width;
-        Height = height;
+        DiagonalInches = diagonalInches;
     }
 
     public IntPtr TargetHwnd { get; }
-    public int Width { get; }
-    public int Height { get; }
+    public double DiagonalInches { get; }
+    public int ResultWidth { get; set; }
+    public int ResultHeight { get; set; }
+    public double ActualDiagonalInches { get; set; }
+    public string DisplayName { get; set; } = string.Empty;
+    public string ErrorMessage { get; set; } = string.Empty;
     public bool Succeeded { get; set; }
 }
 
 public partial class CaptionResizePillWindow : Window
 {
     private const double CollapsedWidth = 182;
-    private const double ExpandedWidth = 322;
+    private const double ExpandedWidth = 286;
     private static readonly TimeSpan RevealDuration = TimeSpan.FromMilliseconds(105);
     private static readonly TimeSpan DismissDuration = TimeSpan.FromMilliseconds(90);
     private static readonly TimeSpan ResizeDuration = TimeSpan.FromMilliseconds(135);
@@ -46,11 +49,11 @@ public partial class CaptionResizePillWindow : Window
     public bool IsInteractionLocked => IsKeyboardFocusWithin;
     public bool IsExpanded => _expanded;
 
-    public void SetTarget(IntPtr hwnd, int width, int height)
+    public void SetTarget(IntPtr hwnd, int width, int height, double? physicalDiagonalInches, string? displayName)
     {
         var targetChanged = hwnd != _targetHwnd;
         _targetHwnd = hwnd;
-        UpdateTargetDimensions(width, height, updateEditors: targetChanged || !IsKeyboardFocusWithin);
+        UpdateTargetDimensions(width, height, physicalDiagonalInches, displayName, updateEditor: targetChanged || !IsKeyboardFocusWithin);
 
         if (targetChanged && _expanded)
         {
@@ -58,14 +61,25 @@ public partial class CaptionResizePillWindow : Window
         }
     }
 
-    public void UpdateTargetDimensions(int width, int height, bool updateEditors = true)
+    public void UpdateTargetDimensions(
+        int width,
+        int height,
+        double? physicalDiagonalInches,
+        string? displayName,
+        bool updateEditor = true)
     {
-        CurrentSizeText.Text = $"{width:N0} × {height:N0}";
+        CurrentSizeText.Text = physicalDiagonalInches is > 0
+            ? $"{physicalDiagonalInches.Value:0.#}″"
+            : "—″";
 
-        if (updateEditors)
+        CurrentSizeText.ToolTip = physicalDiagonalInches is > 0
+            ? $"{width:N0} × {height:N0} px · {physicalDiagonalInches.Value:0.##} in diagonal" +
+              (string.IsNullOrWhiteSpace(displayName) ? string.Empty : $" · {displayName}")
+            : "MUX needs a configured physical display size to calculate inches.";
+
+        if (updateEditor && physicalDiagonalInches is > 0)
         {
-            WidthBox.Text = width.ToString(CultureInfo.InvariantCulture);
-            HeightBox.Text = height.ToString(CultureInfo.InvariantCulture);
+            DiagonalBox.Text = physicalDiagonalInches.Value.ToString("0.##", CultureInfo.CurrentCulture);
         }
     }
 
@@ -136,7 +150,7 @@ public partial class CaptionResizePillWindow : Window
         ApplyRequestedSize();
     }
 
-    private void DimensionBox_PreviewKeyDown(object sender, KeyEventArgs e)
+    private void DiagonalBox_PreviewKeyDown(object sender, KeyEventArgs e)
     {
         if (e.Key == Key.Enter)
         {
@@ -152,33 +166,39 @@ public partial class CaptionResizePillWindow : Window
 
     private void ApplyRequestedSize()
     {
-        if (_targetHwnd == IntPtr.Zero ||
-            !int.TryParse(WidthBox.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var width) ||
-            !int.TryParse(HeightBox.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var height) ||
-            width is < 120 or > 32767 ||
-            height is < 80 or > 32767)
+        if (_targetHwnd == IntPtr.Zero || !TryParseDiagonal(DiagonalBox.Text, out var diagonal) || diagonal is < 1 or > 500)
         {
-            WidthBox.ToolTip = "Enter a width from 120 to 32,767 pixels.";
-            HeightBox.ToolTip = "Enter a height from 80 to 32,767 pixels.";
-            WidthBox.SelectAll();
-            WidthBox.Focus();
+            DiagonalBox.ToolTip = "Enter a physical diagonal from 1 to 500 inches.";
+            DiagonalBox.SelectAll();
+            DiagonalBox.Focus();
             return;
         }
 
-        var args = new CaptionResizeRequestEventArgs(_targetHwnd, width, height);
+        var args = new CaptionResizeRequestEventArgs(_targetHwnd, diagonal);
         ResizeRequested?.Invoke(this, args);
 
         if (!args.Succeeded)
         {
-            WidthBox.ToolTip = "Windows did not allow MUX to resize this window.";
-            HeightBox.ToolTip = WidthBox.ToolTip;
-            WidthBox.SelectAll();
-            WidthBox.Focus();
+            DiagonalBox.ToolTip = string.IsNullOrWhiteSpace(args.ErrorMessage)
+                ? "Windows did not allow MUX to resize this window."
+                : args.ErrorMessage;
+            DiagonalBox.SelectAll();
+            DiagonalBox.Focus();
             return;
         }
 
-        UpdateTargetDimensions(width, height);
+        UpdateTargetDimensions(
+            args.ResultWidth,
+            args.ResultHeight,
+            args.ActualDiagonalInches > 0 ? args.ActualDiagonalInches : diagonal,
+            args.DisplayName);
         SetExpanded(false, focusEditor: false, animate: true);
+    }
+
+    private static bool TryParseDiagonal(string text, out double diagonal)
+    {
+        return double.TryParse(text, NumberStyles.Float, CultureInfo.CurrentCulture, out diagonal) ||
+               double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out diagonal);
     }
 
     private void SetExpanded(bool expanded, bool focusEditor, bool animate)
@@ -223,9 +243,9 @@ public partial class CaptionResizePillWindow : Window
             Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() =>
             {
                 Activate();
-                WidthBox.Focus();
-                WidthBox.SelectAll();
-                Keyboard.Focus(WidthBox);
+                DiagonalBox.Focus();
+                DiagonalBox.SelectAll();
+                Keyboard.Focus(DiagonalBox);
             }));
         }
     }

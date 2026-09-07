@@ -1,9 +1,14 @@
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Threading;
 using MUX.App.Windows;
+using MUX.Core.Geometry;
+using MUX.Core.Models;
 
 namespace MUX.App.Services;
+
+public sealed record DisplaySizingSnapshot(IReadOnlyList<DisplayProfile> Displays, string ActiveDisplayDeviceName);
 
 public sealed class CaptionResizePillService : IDisposable
 {
@@ -24,9 +29,14 @@ public sealed class CaptionResizePillService : IDisposable
     private const uint SwpShowWindow = 0x0040;
     private static readonly IntPtr HwndTopmost = new(-1);
     private static readonly TimeSpan HideDelay = TimeSpan.FromMilliseconds(430);
+    private static readonly object SharedStateLock = new();
+    private static readonly JsonSerializerOptions SharedStateJsonOptions = new() { PropertyNameCaseInsensitive = true };
+    private static DisplaySizingSnapshot _cachedSharedSizing = new(Array.Empty<DisplayProfile>(), string.Empty);
+    private static DateTime _nextSharedStateRefreshUtc = DateTime.MinValue;
 
     private readonly DispatcherTimer _timer;
     private readonly CaptionResizePillWindow _pill;
+    private readonly Func<DisplaySizingSnapshot> _sizingProvider;
     private IntPtr _targetHwnd;
     private NativeRect _targetVisualBounds;
     private uint _targetDpi = 96;
@@ -36,17 +46,24 @@ public sealed class CaptionResizePillService : IDisposable
     private bool _started;
     private bool _disposed;
 
-    public CaptionResizePillService()
+    public CaptionResizePillService(Func<DisplaySizingSnapshot>? sizingProvider = null, bool autoStart = false)
     {
+        _sizingProvider = sizingProvider ?? ReadSharedSizingSnapshot;
         _pill = new CaptionResizePillWindow();
         _pill.ResizeRequested += Pill_ResizeRequested;
-        _pill.LayoutModeChanged += (_, _) => RepositionCurrentPill();
+        _pill.LayoutModeChanged += Pill_LayoutModeChanged;
 
         _timer = new DispatcherTimer(DispatcherPriority.Input, Application.Current.Dispatcher)
         {
             Interval = TimeSpan.FromMilliseconds(65)
         };
         _timer.Tick += Timer_Tick;
+        Application.Current.Exit += Application_Exit;
+
+        if (autoStart)
+        {
+            Start();
+        }
     }
 
     public void Start()
@@ -71,6 +88,8 @@ public sealed class CaptionResizePillService : IDisposable
         _timer.Stop();
         _timer.Tick -= Timer_Tick;
         _pill.ResizeRequested -= Pill_ResizeRequested;
+        _pill.LayoutModeChanged -= Pill_LayoutModeChanged;
+        Application.Current.Exit -= Application_Exit;
 
         try
         {
@@ -81,6 +100,10 @@ public sealed class CaptionResizePillService : IDisposable
             // Shutdown should never be blocked by the helper UI.
         }
     }
+
+    private void Application_Exit(object? sender, ExitEventArgs e) => Dispose();
+
+    private void Pill_LayoutModeChanged(object? sender, EventArgs e) => RepositionCurrentPill();
 
     private void Timer_Tick(object? sender, EventArgs e)
     {
@@ -115,11 +138,11 @@ public sealed class CaptionResizePillService : IDisposable
 
             if (GetWindowRect(hwnd, out var rawBounds))
             {
-                _pill.SetTarget(hwnd, rawBounds.Width, rawBounds.Height);
+                UpdatePillForTarget(hwnd, rawBounds, updateEditor: !_pill.IsInteractionLocked);
             }
             else
             {
-                _pill.SetTarget(hwnd, visualBounds.Width, visualBounds.Height);
+                UpdatePillForTarget(hwnd, visualBounds, updateEditor: !_pill.IsInteractionLocked);
             }
 
             _pill.Reveal();
@@ -222,10 +245,145 @@ public sealed class CaptionResizePillService : IDisposable
 
         if (GetWindowRect(_targetHwnd, out var rawBounds))
         {
-            _pill.UpdateTargetDimensions(rawBounds.Width, rawBounds.Height, updateEditors: !_pill.IsInteractionLocked);
+            UpdatePillForTarget(_targetHwnd, rawBounds, updateEditor: !_pill.IsInteractionLocked);
         }
 
         RepositionCurrentPill();
+    }
+
+    private void UpdatePillForTarget(IntPtr hwnd, NativeRect rawBounds, bool updateEditor)
+    {
+        var display = ResolvePhysicalDisplay(rawBounds);
+        double? physicalDiagonal = null;
+        string? displayName = null;
+
+        if (display is not null)
+        {
+            try
+            {
+                physicalDiagonal = DisplayGeometry.PhysicalDiagonalFromPixels(display, rawBounds.Width, rawBounds.Height);
+                displayName = display.FriendlyName;
+            }
+            catch
+            {
+                physicalDiagonal = null;
+            }
+        }
+
+        if (hwnd != _pill.NativeHandle)
+        {
+            _pill.SetTarget(hwnd, rawBounds.Width, rawBounds.Height, physicalDiagonal, displayName);
+            if (!updateEditor && physicalDiagonal is > 0)
+            {
+                _pill.UpdateTargetDimensions(rawBounds.Width, rawBounds.Height, physicalDiagonal, displayName, updateEditor: false);
+            }
+        }
+    }
+
+    private DisplayProfile? ResolvePhysicalDisplay(NativeRect windowBounds)
+    {
+        var snapshot = GetSizingSnapshot();
+        if (snapshot.Displays.Count == 0)
+        {
+            return null;
+        }
+
+        DisplayProfile? best = null;
+        long bestArea = 0;
+        foreach (var display in snapshot.Displays)
+        {
+            if (display.WidthPx <= 0 || display.HeightPx <= 0 || display.DiagonalInches <= 0 || display.CalibrationScale <= 0)
+            {
+                continue;
+            }
+
+            var area = IntersectionArea(windowBounds, display);
+            if (area > bestArea)
+            {
+                bestArea = area;
+                best = display;
+            }
+        }
+
+        if (best is not null && bestArea > 0)
+        {
+            return best;
+        }
+
+        var active = snapshot.Displays.FirstOrDefault(display =>
+            display.DeviceName.Equals(snapshot.ActiveDisplayDeviceName, StringComparison.OrdinalIgnoreCase));
+        if (active is not null)
+        {
+            return active;
+        }
+
+        return snapshot.Displays.FirstOrDefault(display => display.IsPrimary) ?? snapshot.Displays[0];
+    }
+
+    private DisplaySizingSnapshot GetSizingSnapshot()
+    {
+        try
+        {
+            return _sizingProvider() ?? new DisplaySizingSnapshot(Array.Empty<DisplayProfile>(), string.Empty);
+        }
+        catch
+        {
+            return ReadSharedSizingSnapshot();
+        }
+    }
+
+    private static DisplaySizingSnapshot ReadSharedSizingSnapshot()
+    {
+        lock (SharedStateLock)
+        {
+            var now = DateTime.UtcNow;
+            if (now < _nextSharedStateRefreshUtc)
+            {
+                return _cachedSharedSizing;
+            }
+
+            _nextSharedStateRefreshUtc = now.AddMilliseconds(650);
+            try
+            {
+                var statePath = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "MUX",
+                    "state.json");
+
+                if (!File.Exists(statePath))
+                {
+                    return _cachedSharedSizing;
+                }
+
+                var state = JsonSerializer.Deserialize<MuxState>(File.ReadAllText(statePath), SharedStateJsonOptions);
+                if (state is not null)
+                {
+                    _cachedSharedSizing = new DisplaySizingSnapshot(
+                        state.Displays ?? new List<DisplayProfile>(),
+                        state.ActiveDisplayDeviceName ?? string.Empty);
+                }
+            }
+            catch
+            {
+                // Keep the last known sizing profile while the shared state is being replaced or unavailable.
+            }
+
+            return _cachedSharedSizing;
+        }
+    }
+
+    private static long IntersectionArea(NativeRect windowBounds, DisplayProfile display)
+    {
+        var left = Math.Max(windowBounds.Left, display.LeftPx);
+        var top = Math.Max(windowBounds.Top, display.TopPx);
+        var right = Math.Min(windowBounds.Right, display.LeftPx + display.WidthPx);
+        var bottom = Math.Min(windowBounds.Bottom, display.TopPx + display.HeightPx);
+        if (right <= left || bottom <= top)
+        {
+            return 0;
+        }
+
+        return (long)(right - left) * (bottom - top);
     }
 
     private void RepositionCurrentPill()
@@ -283,20 +441,64 @@ public sealed class CaptionResizePillService : IDisposable
     {
         if (e.TargetHwnd == IntPtr.Zero || e.TargetHwnd != _targetHwnd || !IsWindow(e.TargetHwnd))
         {
+            e.ErrorMessage = "The target window is no longer available.";
             return;
         }
 
-        e.Succeeded = ResizeTargetWindow(e.TargetHwnd, e.Width, e.Height);
-        if (!e.Succeeded)
+        if (!GetWindowRect(e.TargetHwnd, out var current) || current.Width <= 0 || current.Height <= 0)
         {
+            e.ErrorMessage = "MUX could not read the current window size.";
             return;
         }
 
-        if (GetWindowRect(e.TargetHwnd, out var rawBounds))
+        var display = ResolvePhysicalDisplay(current);
+        if (display is null)
         {
-            _pill.UpdateTargetDimensions(rawBounds.Width, rawBounds.Height);
+            e.ErrorMessage = "Set the physical display diagonal in MUX before sizing windows in inches.";
+            return;
         }
 
+        PixelSize target;
+        try
+        {
+            target = DisplayGeometry.PixelsFromPhysicalDiagonal(display, e.DiagonalInches, current.Width, current.Height);
+        }
+        catch
+        {
+            e.ErrorMessage = "The physical display sizing settings are invalid. Check the display diagonal and calibration in MUX.";
+            return;
+        }
+
+        if (target.Width is < 120 or > 32767 || target.Height is < 80 or > 32767)
+        {
+            e.ErrorMessage = "That diagonal would make this window too small or too large for Windows.";
+            return;
+        }
+
+        if (!ResizeTargetWindow(e.TargetHwnd, target.Width, target.Height))
+        {
+            e.ErrorMessage = "Windows did not allow MUX to resize this window.";
+            return;
+        }
+
+        if (!GetWindowRect(e.TargetHwnd, out var actual))
+        {
+            actual = new NativeRect
+            {
+                Left = current.Left,
+                Top = current.Top,
+                Right = current.Left + target.Width,
+                Bottom = current.Top + target.Height
+            };
+        }
+
+        e.ResultWidth = actual.Width;
+        e.ResultHeight = actual.Height;
+        e.DisplayName = display.FriendlyName;
+        e.ActualDiagonalInches = DisplayGeometry.PhysicalDiagonalFromPixels(display, actual.Width, actual.Height);
+        e.Succeeded = true;
+
+        _pill.UpdateTargetDimensions(actual.Width, actual.Height, e.ActualDiagonalInches, e.DisplayName);
         TryGetVisualBounds(e.TargetHwnd, out _targetVisualBounds);
         SetForegroundWindow(e.TargetHwnd);
         RepositionCurrentPill();

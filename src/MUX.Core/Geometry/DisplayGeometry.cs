@@ -3,6 +3,7 @@ using MUX.Core.Models;
 namespace MUX.Core.Geometry;
 
 public readonly record struct SizeD(double Width, double Height);
+public readonly record struct PixelSize(int Width, int Height);
 public readonly record struct PixelRect(int Left, int Top, int Width, int Height)
 {
     public int Right => Left + Width;
@@ -43,6 +44,32 @@ public static class DisplayGeometry
     {
         var ppi = PixelsPerInch(display);
         return new SizeD(display.WidthPx / ppi, display.HeightPx / ppi);
+    }
+
+    public static double PhysicalDiagonalFromPixels(DisplayProfile display, int widthPx, int heightPx)
+    {
+        ArgumentNullException.ThrowIfNull(display);
+        if (widthPx <= 0) throw new ArgumentOutOfRangeException(nameof(widthPx));
+        if (heightPx <= 0) throw new ArgumentOutOfRangeException(nameof(heightPx));
+
+        var diagonalPixels = Math.Sqrt((double)widthPx * widthPx + (double)heightPx * heightPx);
+        return diagonalPixels / PixelsPerInch(display);
+    }
+
+    public static PixelSize PixelsFromPhysicalDiagonal(DisplayProfile display, double diagonalInches, int aspectWidthPx, int aspectHeightPx)
+    {
+        ArgumentNullException.ThrowIfNull(display);
+        ValidatePositive(diagonalInches, nameof(diagonalInches));
+        if (aspectWidthPx <= 0) throw new ArgumentOutOfRangeException(nameof(aspectWidthPx));
+        if (aspectHeightPx <= 0) throw new ArgumentOutOfRangeException(nameof(aspectHeightPx));
+
+        var currentDiagonalPixels = Math.Sqrt((double)aspectWidthPx * aspectWidthPx + (double)aspectHeightPx * aspectHeightPx);
+        var targetDiagonalPixels = diagonalInches * PixelsPerInch(display);
+        var scale = targetDiagonalPixels / currentDiagonalPixels;
+
+        return new PixelSize(
+            Math.Max(1, (int)Math.Round(aspectWidthPx * scale)),
+            Math.Max(1, (int)Math.Round(aspectHeightPx * scale)));
     }
 
     public static PixelRect ZoneToPixels(DisplayProfile display, VirtualMonitorZone zone, bool includeDisplayOffset = true)

@@ -28,6 +28,21 @@ Run("calibration changes pixels-per-inch", () =>
     Near(DisplayGeometry.PixelsPerInch(display), expected, 0.0001, "ppi");
 });
 
+Run("freeform diagonal uses calibrated display scale", () =>
+{
+    var display = new DisplayProfile { WidthPx = 3840, HeightPx = 2160, DiagonalInches = 100, CalibrationScale = 1.05 };
+    var pixels = DisplayGeometry.PixelsFromPhysicalDiagonal(display, 25, 1600, 900);
+    var measured = DisplayGeometry.PhysicalDiagonalFromPixels(display, pixels.Width, pixels.Height);
+    Near(measured, 25, 0.03, "physical diagonal");
+});
+
+Run("freeform diagonal preserves window aspect ratio", () =>
+{
+    var display = new DisplayProfile { WidthPx = 3840, HeightPx = 2160, DiagonalInches = 100, CalibrationScale = 1 };
+    var pixels = DisplayGeometry.PixelsFromPhysicalDiagonal(display, 25, 1400, 900);
+    Near((double)pixels.Width / pixels.Height, 1400d / 900d, 0.002, "aspect ratio");
+});
+
 Run("zones clamp inside physical display", () =>
 {
     var display = new DisplayProfile { WidthPx = 3840, HeightPx = 2160, DiagonalInches = 100, CalibrationScale = 1 };
@@ -90,7 +105,7 @@ if (failures.Count > 0)
     return 1;
 }
 
-Console.WriteLine("MUX.Core validation passed: 6/6 checks.");
+Console.WriteLine("MUX.Core validation passed: 8/8 checks.");
 return 0;
 
 void Run(string name, Action test)

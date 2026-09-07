@@ -93,15 +93,14 @@
         <Grid ClipToBounds="True">
             <Grid x:Name="CollapsedPanel">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="68" />
                     <ColumnDefinition Width="8" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
 
                 <Button Style="{StaticResource PillButton}"
-                        Width="72"
-                        Content="Resize"
-                        ToolTip="Set this window to an exact size"
+                        Content="Size"
+                        ToolTip="Set this window by physical diagonal inches"
                         Click="Expand_Click" />
 
                 <Border Grid.Column="2"
@@ -111,9 +110,10 @@
                         CornerRadius="10"
                         Padding="10,5">
                     <TextBlock x:Name="CurrentSizeText"
-                               Text="— × —"
-                               Foreground="#A6A6AE"
-                               FontSize="10"
+                               Text="—″"
+                               Foreground="#D0D0D6"
+                               FontWeight="SemiBold"
+                               FontSize="11"
                                VerticalAlignment="Center"
                                HorizontalAlignment="Center" />
                 </Border>
@@ -121,27 +121,31 @@
 
             <Grid x:Name="ExpandedPanel" Visibility="Collapsed">
                 <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="52" />
+                    <ColumnDefinition Width="8" />
                     <ColumnDefinition Width="72" />
-                    <ColumnDefinition Width="18" />
-                    <ColumnDefinition Width="72" />
-                    <ColumnDefinition Width="30" />
+                    <ColumnDefinition Width="24" />
                     <ColumnDefinition Width="8" />
                     <ColumnDefinition Width="58" />
                     <ColumnDefinition Width="8" />
                     <ColumnDefinition Width="32" />
                 </Grid.ColumnDefinitions>
 
-                <TextBox x:Name="WidthBox"
-                         Style="{StaticResource PillTextBox}"
-                         ToolTip="Window width in pixels"
-                         PreviewKeyDown="DimensionBox_PreviewKeyDown" />
-                <TextBlock Grid.Column="1" Text="×" Foreground="#777780" FontSize="12" VerticalAlignment="Center" HorizontalAlignment="Center" />
-                <TextBox x:Name="HeightBox"
+                <TextBlock Text="Diagonal"
+                           Foreground="#A6A6AE"
+                           FontSize="10"
+                           VerticalAlignment="Center" />
+                <TextBox x:Name="DiagonalBox"
                          Grid.Column="2"
                          Style="{StaticResource PillTextBox}"
-                         ToolTip="Window height in pixels"
-                         PreviewKeyDown="DimensionBox_PreviewKeyDown" />
-                <TextBlock Grid.Column="3" Text="px" Foreground="#777780" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Center" />
+                         ToolTip="Physical diagonal in inches"
+                         PreviewKeyDown="DiagonalBox_PreviewKeyDown" />
+                <TextBlock Grid.Column="3"
+                           Text="in"
+                           Foreground="#777780"
+                           FontSize="10"
+                           VerticalAlignment="Center"
+                           HorizontalAlignment="Center" />
                 <Button Grid.Column="5"
                         Style="{StaticResource PillButton}"
                         Content="Apply"

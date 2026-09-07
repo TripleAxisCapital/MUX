@@ -38,6 +38,22 @@
             </Setter>
         </Style>
 
+        <Style TargetType="{x:Type ContextMenu}">
+            <Setter Property="Foreground" Value="#F5F5F7" />
+            <Setter Property="Background" Value="#202024" />
+            <Setter Property="BorderBrush" Value="#3A3A40" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="5" />
+            <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI" />
+            <Setter Property="FontSize" Value="11" />
+        </Style>
+
+        <Style TargetType="{x:Type MenuItem}">
+            <Setter Property="Foreground" Value="#F5F5F7" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Padding" Value="10,7" />
+        </Style>
+
         <Style x:Key="PillButton" TargetType="{x:Type Button}">
             <Setter Property="Foreground" Value="#F5F5F7" />
             <Setter Property="Background" Value="#242428" />
@@ -63,12 +79,20 @@
                                 <Setter TargetName="ButtonRoot" Property="Background" Value="#3A3A41" />
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
-                                <Setter Property="Opacity" Value="0.45" />
+                                <Setter Property="Opacity" Value="0.38" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
+        </Style>
+
+        <Style x:Key="FavoritePillButton"
+               TargetType="{x:Type Button}"
+               BasedOn="{StaticResource PillButton}">
+            <Setter Property="Background" Value="#1F1F23" />
+            <Setter Property="FontSize" Value="10.5" />
+            <Setter Property="Padding" Value="8,6" />
         </Style>
 
         <Style x:Key="PillTextBox" TargetType="{x:Type TextBox}">
@@ -125,24 +149,31 @@
         </Border.Effect>
 
         <Grid ClipToBounds="True">
-            <Grid x:Name="CollapsedPanel">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="68" />
-                    <ColumnDefinition Width="8" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
+            <StackPanel x:Name="CollapsedPanel"
+                        Orientation="Horizontal"
+                        VerticalAlignment="Center">
+                <StackPanel x:Name="FavoritesPanel"
+                            Orientation="Horizontal"
+                            VerticalAlignment="Center" />
 
-                <Button Style="{StaticResource PillButton}"
+                <Button x:Name="SizeButton"
+                        Width="68"
+                        Height="32"
+                        Style="{StaticResource PillButton}"
                         Content="Size"
-                        ToolTip="Set this window by physical diagonal inches"
+                        ToolTip="Set size in physical inches"
                         Click="Expand_Click" />
 
-                <Border Grid.Column="2"
+                <Border Width="94"
+                        Height="32"
+                        Margin="8,0,0,0"
                         Background="#111114"
                         BorderBrush="#2E2E33"
                         BorderThickness="1"
                         CornerRadius="10"
-                        Padding="10,5">
+                        Padding="10,0"
+                        Cursor="Hand"
+                        MouseLeftButtonUp="CurrentSize_MouseLeftButtonUp">
                     <TextBlock x:Name="CurrentSizeText"
                                Text="— in"
                                Foreground="#D0D0D6"
@@ -151,49 +182,63 @@
                                VerticalAlignment="Center"
                                HorizontalAlignment="Center" />
                 </Border>
-            </Grid>
+            </StackPanel>
 
-            <Grid x:Name="ExpandedPanel" Visibility="Collapsed">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="52" />
-                    <ColumnDefinition Width="8" />
-                    <ColumnDefinition Width="72" />
-                    <ColumnDefinition Width="24" />
-                    <ColumnDefinition Width="8" />
-                    <ColumnDefinition Width="58" />
-                    <ColumnDefinition Width="8" />
-                    <ColumnDefinition Width="32" />
-                </Grid.ColumnDefinitions>
-
-                <TextBlock Text="Diagonal"
+            <StackPanel x:Name="ExpandedPanel"
+                        Orientation="Horizontal"
+                        VerticalAlignment="Center"
+                        Visibility="Collapsed">
+                <TextBlock x:Name="EditorTitleText"
+                           Width="52"
+                           Text="Diagonal"
                            Foreground="#A6A6AE"
                            FontSize="10"
                            VerticalAlignment="Center" />
+
                 <TextBox x:Name="DiagonalBox"
-                         Grid.Column="2"
+                         Width="76"
+                         Margin="8,0,0,0"
                          Style="{StaticResource PillTextBox}"
                          VerticalAlignment="Center"
                          ToolTip="Physical diagonal in inches"
                          PreviewKeyDown="DiagonalBox_PreviewKeyDown" />
-                <TextBlock Grid.Column="3"
+
+                <TextBlock Width="24"
                            Text="in"
                            Foreground="#A6A6AE"
                            FontSize="10"
                            FontWeight="SemiBold"
                            VerticalAlignment="Center"
                            HorizontalAlignment="Center" />
-                <Button Grid.Column="5"
+
+                <Button x:Name="FavoriteActionButton"
+                        Width="34"
+                        Height="32"
+                        Margin="8,0,0,0"
+                        Style="{StaticResource PillButton}"
+                        Padding="7,6"
+                        Content="+"
+                        FontSize="17"
+                        ToolTip="Add this size to favorites"
+                        Click="FavoriteAction_Click" />
+
+                <Button Width="58"
+                        Height="32"
+                        Margin="8,0,0,0"
                         Style="{StaticResource PillButton}"
                         Content="Apply"
                         Click="Apply_Click" />
-                <Button Grid.Column="7"
+
+                <Button Width="32"
+                        Height="32"
+                        Margin="8,0,0,0"
                         Style="{StaticResource PillButton}"
                         Padding="7,6"
                         Content="‹"
                         FontSize="16"
                         ToolTip="Back"
                         Click="Collapse_Click" />
-            </Grid>
+            </StackPanel>
         </Grid>
     </Border>
 </Window>

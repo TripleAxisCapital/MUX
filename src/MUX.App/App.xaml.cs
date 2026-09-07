@@ -11,6 +11,7 @@ public partial class App : Application
     private static readonly Uri MuxLogoUri = new("pack://application:,,,/Assets/mux-logo.png", UriKind.Absolute);
 
     private Forms.NotifyIcon? _trayIcon;
+    private Forms.ToolStripMenuItem? _predefinedAreasMenuItem;
     private MainWindow? _mainWindow;
     private Icon? _muxIcon;
     private bool _isExiting;
@@ -37,9 +38,12 @@ public partial class App : Application
         MainWindow = _mainWindow;
         _mainWindow.InitializeFeatureControls();
         _mainWindow.InitializePhantomWindows();
+        _mainWindow.InitializeFreeformControls();
+        _mainWindow.PredefinedAreasEnabledChanged += MainWindow_PredefinedAreasEnabledChanged;
         _mainWindow.Show();
 
         InitializeTrayIconSafely();
+        UpdatePredefinedAreasTrayState();
     }
 
     public bool IsExiting => _isExiting;
@@ -65,6 +69,7 @@ public partial class App : Application
         _isExiting = true;
         _trayIcon?.Dispose();
         _trayIcon = null;
+        _predefinedAreasMenuItem = null;
         _muxIcon?.Dispose();
         _muxIcon = null;
         _mainWindow?.Close();
@@ -98,13 +103,23 @@ public partial class App : Application
             var menu = new Forms.ContextMenuStrip();
             menu.Items.Add("Open MUX", null, (_, _) => ShowMainWindow());
             menu.Items.Add(new Forms.ToolStripSeparator());
+
+            _predefinedAreasMenuItem = new Forms.ToolStripMenuItem("Predefined window areas")
+            {
+                CheckOnClick = false,
+                ToolTipText = "Turn MUX monitor regions on or off without deleting your layouts."
+            };
+            _predefinedAreasMenuItem.Click += PredefinedAreasMenuItem_Click;
+            menu.Items.Add(_predefinedAreasMenuItem);
+
+            menu.Items.Add(new Forms.ToolStripSeparator());
             menu.Items.Add("Quit MUX", null, (_, _) => Quit());
 
             _muxIcon = LoadMuxIcon();
             _trayIcon = new Forms.NotifyIcon
             {
                 Icon = _muxIcon,
-                Text = "MUX — One display. Many.",
+                Text = "MUX — Freeform sizing ready",
                 Visible = true,
                 ContextMenuStrip = menu
             };
@@ -116,8 +131,49 @@ public partial class App : Application
             LogFailure("TrayIcon", exception);
             _trayIcon?.Dispose();
             _trayIcon = null;
+            _predefinedAreasMenuItem = null;
             _muxIcon?.Dispose();
             _muxIcon = null;
+        }
+    }
+
+    private async void PredefinedAreasMenuItem_Click(object? sender, EventArgs e)
+    {
+        if (_mainWindow is null)
+        {
+            return;
+        }
+
+        await _mainWindow.SetPredefinedAreasEnabledAsync(!_mainWindow.PredefinedAreasEnabled);
+        UpdatePredefinedAreasTrayState();
+    }
+
+    private void MainWindow_PredefinedAreasEnabledChanged(object? sender, EventArgs e)
+    {
+        UpdatePredefinedAreasTrayState();
+    }
+
+    private void UpdatePredefinedAreasTrayState()
+    {
+        if (_mainWindow is null)
+        {
+            return;
+        }
+
+        var enabled = _mainWindow.PredefinedAreasEnabled;
+        if (_predefinedAreasMenuItem is not null)
+        {
+            _predefinedAreasMenuItem.Checked = enabled;
+            _predefinedAreasMenuItem.Text = enabled
+                ? "Predefined window areas · On"
+                : "Predefined window areas · Off";
+        }
+
+        if (_trayIcon is not null)
+        {
+            _trayIcon.Text = enabled
+                ? "MUX — Areas on · Freeform sizing ready"
+                : "MUX — Freeform sizing · Areas off";
         }
     }
 

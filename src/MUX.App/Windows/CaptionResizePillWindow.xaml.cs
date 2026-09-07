@@ -69,8 +69,8 @@ public partial class CaptionResizePillWindow : Window
         bool updateEditor = true)
     {
         CurrentSizeText.Text = physicalDiagonalInches is > 0
-            ? $"{physicalDiagonalInches.Value:0.#}″"
-            : "—″";
+            ? $"{physicalDiagonalInches.Value:0.#} in"
+            : "— in";
 
         CurrentSizeText.ToolTip = physicalDiagonalInches is > 0
             ? $"{width:N0} × {height:N0} px · {physicalDiagonalInches.Value:0.##} in diagonal" +

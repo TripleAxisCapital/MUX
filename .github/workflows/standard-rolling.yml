@@ -1,0 +1,94 @@
+name: Publish MUX Standard rolling download
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mux-standard-rolling
+  cancel-in-progress: true
+
+jobs:
+  build-standard:
+    name: Build MUX Standard immediately
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore MUX.sln
+
+      - name: Publish MUX Standard
+        run: dotnet publish src/MUX.App/MUX.App.csproj -c Release -r win-x64 --self-contained true -o artifacts/MUX
+
+      - name: Launch smoke test
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD "artifacts/MUX/MUX.exe"
+          $process = Start-Process -FilePath $exe -ArgumentList "--background" -PassThru
+          Start-Sleep -Seconds 5
+          $process.Refresh()
+
+          if ($process.HasExited) {
+            $log = Join-Path $env:LOCALAPPDATA "MUX/startup-error.log"
+            if (Test-Path $log) {
+              Write-Host "--- MUX startup-error.log ---"
+              Get-Content $log
+              Write-Host "-----------------------------"
+            }
+            throw "MUX Standard exited during the startup smoke test with exit code $($process.ExitCode)."
+          }
+
+          Stop-Process -Id $process.Id -Force
+          Write-Host "MUX Standard remained alive through the startup smoke test."
+
+      - name: Package Standard
+        shell: pwsh
+        run: Compress-Archive -Path artifacts/MUX/* -DestinationPath artifacts/MUX-win-x64.zip -CompressionLevel Optimal
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MUX-Standard-rolling
+          path: artifacts/MUX-win-x64.zip
+          if-no-files-found: error
+
+  publish-standard:
+    name: Replace Standard download immediately
+    needs: build-standard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: MUX-Standard-rolling
+          path: release-assets
+
+      - name: Publish current Standard asset
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          if gh release view latest-build --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload latest-build \
+              release-assets/MUX-win-x64.zip \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+          else
+            gh release create latest-build \
+              release-assets/MUX-win-x64.zip \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "MUX Latest Windows Builds" \
+              --notes "Rolling MUX Windows downloads. MUX Standard is published immediately after its Windows build succeeds; MUX Virtual Displays is published by the full driver pipeline." \
+              --prerelease
+          fi
+
+          echo "MUX Standard rolling asset now matches $GITHUB_SHA"

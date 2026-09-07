@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Drawing;
 using System.Runtime.InteropServices;
 using System.Windows;
@@ -32,6 +33,7 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        RetireStaleStandardInstances();
 
         _mainWindow = new MainWindow();
         ApplyWindowIconSafely(_mainWindow);
@@ -83,6 +85,59 @@ public partial class App : Application
         base.OnExit(e);
     }
 
+    private static void RetireStaleStandardInstances()
+    {
+        try
+        {
+            using var current = Process.GetCurrentProcess();
+            foreach (var process in Process.GetProcessesByName(current.ProcessName))
+            {
+                if (process.Id == current.Id)
+                {
+                    process.Dispose();
+                    continue;
+                }
+
+                try
+                {
+                    var executablePath = process.MainModule?.FileName;
+                    if (!string.Equals(Path.GetFileName(executablePath), "MUX.exe", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    if (process.HasExited)
+                    {
+                        continue;
+                    }
+
+                    // Closing MUX normally hides it to the tray, so first give the old process
+                    // a chance to react and then terminate it if it remains resident. This prevents
+                    // an older download from continuing to own the global resize pill after a new
+                    // Standard build is launched.
+                    process.CloseMainWindow();
+                    if (!process.WaitForExit(400))
+                    {
+                        process.Kill(entireProcessTree: true);
+                        process.WaitForExit(1200);
+                    }
+                }
+                catch (Exception exception)
+                {
+                    LogFailure("RetireStaleStandardInstance", exception);
+                }
+                finally
+                {
+                    process.Dispose();
+                }
+            }
+        }
+        catch (Exception exception)
+        {
+            LogFailure("RetireStaleStandardInstances", exception);
+        }
+    }
+
     private static void ApplyWindowIconSafely(Window window)
     {
         try
@@ -100,26 +155,39 @@ public partial class App : Application
     {
         try
         {
-            var menu = new Forms.ContextMenuStrip();
-            menu.Items.Add("Open MUX", null, (_, _) => ShowMainWindow());
+            var menu = new Forms.ContextMenuStrip
+            {
+                BackColor = Color.FromArgb(28, 28, 31),
+                ForeColor = Color.FromArgb(245, 245, 247),
+                Renderer = new Forms.ToolStripProfessionalRenderer(new MuxTrayColorTable()),
+                Font = new Font("Segoe UI", 9.0f)
+            };
+
+            var openItem = menu.Items.Add("Open MUX", null, (_, _) => ShowMainWindow());
+            openItem.ForeColor = Color.FromArgb(245, 245, 247);
+            openItem.BackColor = Color.FromArgb(28, 28, 31);
             menu.Items.Add(new Forms.ToolStripSeparator());
 
             _predefinedAreasMenuItem = new Forms.ToolStripMenuItem("Predefined window areas")
             {
                 CheckOnClick = false,
+                ForeColor = Color.FromArgb(245, 245, 247),
+                BackColor = Color.FromArgb(28, 28, 31),
                 ToolTipText = "Turn MUX monitor regions on or off without deleting your layouts."
             };
             _predefinedAreasMenuItem.Click += PredefinedAreasMenuItem_Click;
             menu.Items.Add(_predefinedAreasMenuItem);
 
             menu.Items.Add(new Forms.ToolStripSeparator());
-            menu.Items.Add("Quit MUX", null, (_, _) => Quit());
+            var quitItem = menu.Items.Add("Quit MUX", null, (_, _) => Quit());
+            quitItem.ForeColor = Color.FromArgb(245, 245, 247);
+            quitItem.BackColor = Color.FromArgb(28, 28, 31);
 
             _muxIcon = LoadMuxIcon();
             _trayIcon = new Forms.NotifyIcon
             {
                 Icon = _muxIcon,
-                Text = "MUX — Freeform sizing ready",
+                Text = "MUX Standard — physical-inch sizing ready",
                 Visible = true,
                 ContextMenuStrip = menu
             };
@@ -172,8 +240,8 @@ public partial class App : Application
         if (_trayIcon is not null)
         {
             _trayIcon.Text = enabled
-                ? "MUX — Areas on · Freeform sizing ready"
-                : "MUX — Freeform sizing · Areas off";
+                ? "MUX Standard — Areas on · inch sizing"
+                : "MUX Standard — Freeform · inch sizing";
         }
     }
 
@@ -244,6 +312,36 @@ public partial class App : Application
         {
             // Never allow diagnostic logging itself to become a startup failure.
         }
+    }
+
+    private sealed class MuxTrayColorTable : Forms.ProfessionalColorTable
+    {
+        public MuxTrayColorTable()
+        {
+            UseSystemColors = false;
+        }
+
+        private static readonly Color Background = Color.FromArgb(28, 28, 31);
+        private static readonly Color Raised = Color.FromArgb(44, 44, 49);
+        private static readonly Color Border = Color.FromArgb(58, 58, 64);
+
+        public override Color ToolStripDropDownBackground => Background;
+        public override Color ImageMarginGradientBegin => Background;
+        public override Color ImageMarginGradientMiddle => Background;
+        public override Color ImageMarginGradientEnd => Background;
+        public override Color MenuBorder => Border;
+        public override Color MenuItemBorder => Border;
+        public override Color MenuItemSelected => Raised;
+        public override Color MenuItemSelectedGradientBegin => Raised;
+        public override Color MenuItemSelectedGradientEnd => Raised;
+        public override Color MenuItemPressedGradientBegin => Raised;
+        public override Color MenuItemPressedGradientMiddle => Raised;
+        public override Color MenuItemPressedGradientEnd => Raised;
+        public override Color SeparatorDark => Border;
+        public override Color SeparatorLight => Background;
+        public override Color CheckBackground => Raised;
+        public override Color CheckSelectedBackground => Raised;
+        public override Color CheckPressedBackground => Raised;
     }
 
     [DllImport("user32.dll", SetLastError = true)]

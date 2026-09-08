@@ -21,7 +21,9 @@ public partial class CaptionResizePillWindow
         {
             try
             {
-                _edgeCoverService = new EnhancedEdgeCoverService();
+                // Edge-cover sessions are process-wide so disabling the caption pill on another
+                // display cannot destroy configured black bars or their user-selected depths.
+                _edgeCoverService = EnhancedEdgeCoverService.Shared;
                 _edgeCoverService.Changed += EdgeCoverService_Changed;
             }
             catch
@@ -182,6 +184,7 @@ public partial class CaptionResizePillWindow
         }
 
         var active = _edgeCoverService?.IsEnabledForWindow(_targetHwnd) == true;
+        var globallyVisible = _edgeCoverService?.AreCoversGloballyVisible != false;
         _edgeCoverButton.Background = new SolidColorBrush(
             active
                 ? Color.FromRgb(62, 62, 69)
@@ -194,9 +197,11 @@ public partial class CaptionResizePillWindow
 
         _edgeCoverButton.ToolTip = _targetHwnd == IntPtr.Zero
             ? "Window edge covers · Point at a window first"
-            : active
-                ? "Window edge covers · On · Grab from either side when you are near a black edge"
-                : "Window edge covers · Off for this window";
+            : active && !globallyVisible
+                ? "Window edge covers · Configured but hidden globally · Use the Stream Deck / black-bars shortcut to show all"
+                : active
+                    ? "Window edge covers · On · Grab from either side when you are near a black edge"
+                    : "Window edge covers · Off for this window";
     }
 
     private void DisposeEdgeCoverControls()
@@ -210,14 +215,9 @@ public partial class CaptionResizePillWindow
 
         if (_edgeCoverService is not null)
         {
-            try
-            {
-                _edgeCoverService.Changed -= EdgeCoverService_Changed;
-                _edgeCoverService.Dispose();
-            }
-            catch
-            {
-            }
+            // The edge-cover service is process-wide. Only detach this pill's listener; disposing
+            // it here would erase every configured cover whenever the display-gated pill is rebuilt.
+            try { _edgeCoverService.Changed -= EdgeCoverService_Changed; } catch { }
             _edgeCoverService = null;
         }
 

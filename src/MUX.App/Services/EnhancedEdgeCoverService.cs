@@ -20,8 +20,11 @@ public sealed class EnhancedEdgeCoverService : IDisposable
     private const int DwmwaExtendedFrameBounds = 9;
     private const int DwmwaCloaked = 14;
 
+    private static readonly Lazy<EnhancedEdgeCoverService> SharedInstance = new(() => new EnhancedEdgeCoverService());
+
     private readonly Dictionary<IntPtr, CoverSession> _sessions = new();
     private readonly DispatcherTimer _timer;
+    private bool _globallyVisible = true;
     private bool _disposed;
 
     public EnhancedEdgeCoverService()
@@ -34,10 +37,73 @@ public sealed class EnhancedEdgeCoverService : IDisposable
         _timer.Start();
     }
 
+    public static EnhancedEdgeCoverService Shared => SharedInstance.Value;
+
     public event EventHandler? Changed;
+
+    public bool AreCoversGloballyVisible => _globallyVisible;
+    public int ConfiguredWindowCount => _sessions.Count;
 
     public bool IsEnabledForWindow(IntPtr hwnd)
         => hwnd != IntPtr.Zero && _sessions.ContainsKey(hwnd);
+
+    /// <summary>
+    /// Globally hides or shows every configured edge-cover session without destroying the session
+    /// or losing any of the four user-selected cover depths. This is the operation used by the
+    /// Stream Deck/global hotkey toggle.
+    /// </summary>
+    public bool ToggleAllVisibility()
+    {
+        if (_disposed)
+        {
+            return false;
+        }
+
+        SetAllVisibility(!_globallyVisible);
+        return _globallyVisible;
+    }
+
+    public void SetAllVisibility(bool visible)
+    {
+        if (_disposed || _globallyVisible == visible)
+        {
+            return;
+        }
+
+        _globallyVisible = visible;
+        List<IntPtr>? stale = null;
+
+        foreach (var pair in _sessions.ToArray())
+        {
+            try
+            {
+                if (pair.Value.SetGlobalVisibility(visible))
+                {
+                    continue;
+                }
+            }
+            catch
+            {
+                // A failed target must not affect the remaining configured windows.
+            }
+
+            stale ??= new List<IntPtr>();
+            stale.Add(pair.Key);
+        }
+
+        if (stale is not null)
+        {
+            foreach (var hwnd in stale)
+            {
+                if (_sessions.Remove(hwnd, out var session))
+                {
+                    SafeDispose(session);
+                }
+            }
+        }
+
+        RaiseChanged();
+    }
 
     public bool ToggleWindow(IntPtr hwnd)
     {
@@ -62,7 +128,7 @@ public sealed class EnhancedEdgeCoverService : IDisposable
         try
         {
             session = new CoverSession(hwnd);
-            if (!session.Refresh(TryCursor()))
+            if (!session.Refresh(TryCursor(), _globallyVisible))
             {
                 SafeDispose(session);
                 return false;
@@ -93,7 +159,7 @@ public sealed class EnhancedEdgeCoverService : IDisposable
         {
             try
             {
-                if (pair.Value.Refresh(cursor))
+                if (pair.Value.Refresh(cursor, _globallyVisible))
                 {
                     continue;
                 }
@@ -188,6 +254,7 @@ public sealed class EnhancedEdgeCoverService : IDisposable
         private int _bottomThickness;
         private int _leftThickness;
         private uint _dpi;
+        private bool _globallyVisible = true;
         private bool _initialized;
         private bool _disposed;
 
@@ -213,8 +280,16 @@ public sealed class EnhancedEdgeCoverService : IDisposable
                 () => GetThickness(side),
                 value => SetThickness(side, value));
 
-        public bool Refresh(NativePoint? cursor)
+        public bool SetGlobalVisibility(bool visible)
         {
+            _globallyVisible = visible;
+            return Refresh(TryCursor(), visible);
+        }
+
+        public bool Refresh(NativePoint? cursor, bool globallyVisible)
+        {
+            _globallyVisible = globallyVisible;
+
             if (_disposed || !IsWindow(_target))
             {
                 return false;
@@ -237,6 +312,12 @@ public sealed class EnhancedEdgeCoverService : IDisposable
             _targetRect = rect;
             _initialized = true;
             ClampThicknesses();
+
+            if (!_globallyVisible)
+            {
+                ParkAll();
+                return true;
+            }
 
             _top.Update(rect, _topThickness, _dpi, cursor);
             _right.Update(rect, _rightThickness, _dpi, cursor);
@@ -275,7 +356,7 @@ public sealed class EnhancedEdgeCoverService : IDisposable
                 case EdgeSide.Left: _leftThickness = next; break;
             }
 
-            try { Refresh(TryCursor()); } catch { }
+            try { Refresh(TryCursor(), _globallyVisible); } catch { }
         }
 
         private void ClampThicknesses()

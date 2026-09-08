@@ -47,6 +47,7 @@ public partial class MainWindow
         if (_hotkeys is not null)
         {
             _hotkeys.Register(5, System.Windows.Input.Key.F, ToggleMuxFullscreen);
+            _hotkeys.Register(6, System.Windows.Input.Key.B, ToggleAllBlackBars);
             _hotkeys.Reload(_state.Shortcuts, out _);
         }
 
@@ -153,17 +154,29 @@ public partial class MainWindow
             .Select(border => border.Child as StackPanel)
             .FirstOrDefault(panel => panel?.Children.OfType<TextBlock>().FirstOrDefault()?.Text == "Keyboard");
 
-        if (_shortcutSummaryPanel is not null && _shortcutSummaryPanel.Children.OfType<TextBlock>().Count() < 6)
+        if (_shortcutSummaryPanel is not null)
         {
-            _shortcutSummaryPanel.Children.Insert(2, new TextBlock
+            var textBlocks = _shortcutSummaryPanel.Children.OfType<TextBlock>().ToList();
+            if (!textBlocks.Any(block => block.Text.Contains("MUX Fullscreen", StringComparison.OrdinalIgnoreCase)))
             {
-                Text = "Ctrl + Alt + F   MUX Fullscreen",
-                Foreground = new SolidColorBrush(Color.FromRgb(102, 102, 111)),
-                FontSize = 10,
-                Margin = new Thickness(0, 5, 0, 0)
-            });
+                _shortcutSummaryPanel.Children.Insert(Math.Min(2, _shortcutSummaryPanel.Children.Count), CreateShortcutSummaryLine("Ctrl + Alt + F   MUX Fullscreen"));
+            }
+
+            textBlocks = _shortcutSummaryPanel.Children.OfType<TextBlock>().ToList();
+            if (!textBlocks.Any(block => block.Text.Contains("Black bars", StringComparison.OrdinalIgnoreCase)))
+            {
+                _shortcutSummaryPanel.Children.Insert(Math.Min(3, _shortcutSummaryPanel.Children.Count), CreateShortcutSummaryLine("Ctrl + Alt + B   Black bars / Stream Deck"));
+            }
         }
     }
+
+    private static TextBlock CreateShortcutSummaryLine(string text) => new()
+    {
+        Text = text,
+        Foreground = new SolidColorBrush(Color.FromRgb(102, 102, 111)),
+        FontSize = 10,
+        Margin = new Thickness(0, 5, 0, 0)
+    };
 
     private async void CloneZone_Click(object sender, RoutedEventArgs e)
     {
@@ -243,16 +256,17 @@ public partial class MainWindow
         }
 
         var lines = _shortcutSummaryPanel.Children.OfType<TextBlock>().ToList();
-        if (lines.Count < 6)
+        if (lines.Count < 7)
         {
             return;
         }
 
         lines[1].Text = $"{ShortcutSettingsWindow.Format(settings.ToggleMaximize)}   Maximize / restore";
         lines[2].Text = $"{ShortcutSettingsWindow.Format(settings.ToggleFullscreen)}   MUX Fullscreen";
-        lines[3].Text = $"{ShortcutSettingsWindow.Format(settings.PreviousMonitor)}   Previous monitor";
-        lines[4].Text = $"{ShortcutSettingsWindow.Format(settings.NextMonitor)}   Next monitor";
-        lines[5].Text = $"{ShortcutSettingsWindow.Format(settings.EditLayout)}   Edit layout";
+        lines[3].Text = $"{ShortcutSettingsWindow.Format(settings.ToggleEdgeCovers)}   Black bars / Stream Deck";
+        lines[4].Text = $"{ShortcutSettingsWindow.Format(settings.PreviousMonitor)}   Previous monitor";
+        lines[5].Text = $"{ShortcutSettingsWindow.Format(settings.NextMonitor)}   Next monitor";
+        lines[6].Text = $"{ShortcutSettingsWindow.Format(settings.EditLayout)}   Edit layout";
     }
 
     private static string ShortcutActionName(int id) => id switch
@@ -262,6 +276,7 @@ public partial class MainWindow
         3 => "Next monitor",
         4 => "Edit layout",
         5 => "MUX Fullscreen",
+        6 => "Black bars / Stream Deck",
         _ => "Shortcut"
     };
 }

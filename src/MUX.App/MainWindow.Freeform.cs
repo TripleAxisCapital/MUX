@@ -16,6 +16,9 @@ public partial class MainWindow
 
     public bool PredefinedAreasEnabled => _state.Enabled;
 
+    public bool ToggleAllBlackBars()
+        => EnhancedEdgeCoverService.Shared.ToggleAllVisibility();
+
     public void InitializeFreeformControls()
     {
         if (_freeformControlsInitialized)

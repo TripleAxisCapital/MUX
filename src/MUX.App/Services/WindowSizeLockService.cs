@@ -4,11 +4,30 @@ using System.Windows.Threading;
 namespace MUX.App.Services;
 
 /// <summary>
-/// Keeps selected external top-level windows at the exact pixel size they had when locked.
-/// Position changes are allowed; attempts to resize or maximize are immediately restored.
+/// Pins selected external top-level windows to the exact position and size they had when locked.
+/// Interactive move, resize and maximize gestures are blocked before Windows begins moving the HWND;
+/// a fast geometry guard remains as a final defence against keyboard/programmatic placement changes.
 /// </summary>
 public sealed class WindowSizeLockService : IDisposable
 {
+    private const int WhMouseLl = 14;
+    private const int GaRoot = 2;
+    private const int WmLButtonDown = 0x0201;
+    private const int WmLButtonDblClk = 0x0203;
+    private const int WmNcHitTest = 0x0084;
+    private const int WmCancelMode = 0x001F;
+    private const int HtCaption = 2;
+    private const int HtMaxButton = 9;
+    private const int HtLeft = 10;
+    private const int HtRight = 11;
+    private const int HtTop = 12;
+    private const int HtTopLeft = 13;
+    private const int HtTopRight = 14;
+    private const int HtBottom = 15;
+    private const int HtBottomLeft = 16;
+    private const int HtBottomRight = 17;
+    private const uint EventSystemMoveSizeStart = 0x000A;
+    private const uint WineventOutOfContext = 0x0000;
     private const uint SwpNoZOrder = 0x0004;
     private const uint SwpNoActivate = 0x0010;
     private const uint SwpNoOwnerZOrder = 0x0200;
@@ -16,13 +35,53 @@ public sealed class WindowSizeLockService : IDisposable
 
     private readonly Dictionary<IntPtr, LockedWindow> _lockedWindows = new();
     private readonly DispatcherTimer _timer;
+    private readonly Dispatcher _dispatcher;
+    private readonly LowLevelMouseProc _mouseProc;
+    private readonly WinEventDelegate _winEventProc;
+    private IntPtr _mouseHook;
+    private IntPtr _moveSizeHook;
     private bool _disposed;
 
     public WindowSizeLockService()
     {
+        _dispatcher = Dispatcher.CurrentDispatcher;
+        _mouseProc = MouseHookProc;
+        _winEventProc = WinEventProc;
+
+        // A low-level mouse hook is the only reliable process-external way to prevent a normal
+        // caption drag or resize border drag before another application's move loop starts.
+        // If Windows refuses the hook for any reason, the WinEvent cancellation + geometry guard
+        // below still keep the lock functional instead of making MUX fail to start.
+        try
+        {
+            _mouseHook = SetWindowsHookEx(WhMouseLl, _mouseProc, GetModuleHandle(null), 0);
+        }
+        catch
+        {
+            _mouseHook = IntPtr.Zero;
+        }
+
+        try
+        {
+            _moveSizeHook = SetWinEventHook(
+                EventSystemMoveSizeStart,
+                EventSystemMoveSizeStart,
+                IntPtr.Zero,
+                _winEventProc,
+                0,
+                0,
+                WineventOutOfContext);
+        }
+        catch
+        {
+            _moveSizeHook = IntPtr.Zero;
+        }
+
         _timer = new DispatcherTimer(DispatcherPriority.Send)
         {
-            Interval = TimeSpan.FromMilliseconds(16)
+            // The mouse hook normally means this timer does nothing. The short interval is only a
+            // safety net for Win+Arrow, app-driven SetWindowPos, accessibility tools, etc.
+            Interval = TimeSpan.FromMilliseconds(12)
         };
         _timer.Tick += Timer_Tick;
         _timer.Start();
@@ -36,7 +95,7 @@ public sealed class WindowSizeLockService : IDisposable
     }
 
     /// <summary>
-    /// Toggles the size lock for a native top-level window. Returns the new locked state.
+    /// Toggles the position-and-size lock for a native top-level window. Returns the new state.
     /// A maximized or minimized window must be restored before it can be locked.
     /// </summary>
     public bool ToggleWindow(IntPtr hwnd)
@@ -62,6 +121,90 @@ public sealed class WindowSizeLockService : IDisposable
         return true;
     }
 
+    private IntPtr MouseHookProc(int nCode, IntPtr wParam, IntPtr lParam)
+    {
+        if (nCode >= 0 && !_disposed && _lockedWindows.Count > 0)
+        {
+            var message = unchecked((int)wParam.ToInt64());
+            if (message is WmLButtonDown or WmLButtonDblClk)
+            {
+                try
+                {
+                    var data = Marshal.PtrToStructure<MsllHookStruct>(lParam);
+                    var hitWindow = WindowFromPoint(data.Point);
+                    var root = hitWindow == IntPtr.Zero ? IntPtr.Zero : GetAncestor(hitWindow, GaRoot);
+                    if (root != IntPtr.Zero && _lockedWindows.ContainsKey(root))
+                    {
+                        var hit = unchecked((int)SendMessage(
+                            root,
+                            WmNcHitTest,
+                            IntPtr.Zero,
+                            MakePointLParam(data.Point.X, data.Point.Y)).ToInt64());
+
+                        if (BlocksGeometryGesture(hit))
+                        {
+                            // Swallow the mouse message itself: no temporary movement, no snap-back,
+                            // and no resize loop ever begins in the target process.
+                            return new IntPtr(1);
+                        }
+                    }
+                }
+                catch
+                {
+                    // A hook must never throw across the native callback boundary.
+                }
+            }
+        }
+
+        return CallNextHookEx(_mouseHook, nCode, wParam, lParam);
+    }
+
+    private static bool BlocksGeometryGesture(int hit)
+    {
+        return hit == HtCaption ||
+               hit == HtMaxButton ||
+               hit is >= HtLeft and <= HtBottomRight;
+    }
+
+    private void WinEventProc(
+        IntPtr hook,
+        uint eventType,
+        IntPtr hwnd,
+        int idObject,
+        int idChild,
+        uint eventThread,
+        uint eventTime)
+    {
+        if (_disposed || eventType != EventSystemMoveSizeStart || hwnd == IntPtr.Zero || !_lockedWindows.ContainsKey(hwnd))
+        {
+            return;
+        }
+
+        // Covers keyboard/system-menu move and size commands that do not originate from the mouse.
+        _dispatcher.BeginInvoke(
+            DispatcherPriority.Send,
+            new Action(() => CancelInteractiveGeometryChange(hwnd)));
+    }
+
+    private void CancelInteractiveGeometryChange(IntPtr hwnd)
+    {
+        if (_disposed || !_lockedWindows.TryGetValue(hwnd, out var locked))
+        {
+            return;
+        }
+
+        try
+        {
+            SendMessage(hwnd, WmCancelMode, IntPtr.Zero, IntPtr.Zero);
+        }
+        catch
+        {
+            // The geometry guard below is still authoritative.
+        }
+
+        locked.Enforce();
+    }
+
     private void Timer_Tick(object? sender, EventArgs e)
     {
         if (_disposed || _lockedWindows.Count == 0)
@@ -70,7 +213,7 @@ public sealed class WindowSizeLockService : IDisposable
         }
 
         List<IntPtr>? stale = null;
-        foreach (var pair in _lockedWindows)
+        foreach (var pair in _lockedWindows.ToArray())
         {
             if (pair.Value.Enforce())
             {
@@ -116,22 +259,30 @@ public sealed class WindowSizeLockService : IDisposable
         _timer.Stop();
         _timer.Tick -= Timer_Tick;
         _lockedWindows.Clear();
+
+        if (_mouseHook != IntPtr.Zero)
+        {
+            try { UnhookWindowsHookEx(_mouseHook); } catch { }
+            _mouseHook = IntPtr.Zero;
+        }
+
+        if (_moveSizeHook != IntPtr.Zero)
+        {
+            try { UnhookWinEvent(_moveSizeHook); } catch { }
+            _moveSizeHook = IntPtr.Zero;
+        }
     }
 
     private sealed class LockedWindow
     {
         private readonly IntPtr _hwnd;
-        private readonly int _lockedWidth;
-        private readonly int _lockedHeight;
-        private NativeRect _lastRect;
+        private readonly NativeRect _lockedRect;
         private bool _applying;
 
-        public LockedWindow(IntPtr hwnd, NativeRect initialRect)
+        public LockedWindow(IntPtr hwnd, NativeRect lockedRect)
         {
             _hwnd = hwnd;
-            _lockedWidth = initialRect.Width;
-            _lockedHeight = initialRect.Height;
-            _lastRect = initialRect;
+            _lockedRect = lockedRect;
         }
 
         public bool Enforce()
@@ -148,115 +299,81 @@ public sealed class WindowSizeLockService : IDisposable
 
             if (!IsWindowVisible(_hwnd) || IsIconic(_hwnd))
             {
+                // Minimize remains allowed. Restoring the window returns it to the locked rect.
                 return true;
             }
-
-            // A locked window is meant to stay at its exact current size. If Windows tries to
-            // maximize it, restore it to the last normal location and the captured dimensions.
-            if (IsZoomed(_hwnd))
-            {
-                _applying = true;
-                try
-                {
-                    ShowWindow(_hwnd, SwRestore);
-                    SetWindowPos(
-                        _hwnd,
-                        IntPtr.Zero,
-                        _lastRect.Left,
-                        _lastRect.Top,
-                        _lockedWidth,
-                        _lockedHeight,
-                        SwpNoZOrder | SwpNoActivate | SwpNoOwnerZOrder);
-                    _lastRect = new NativeRect
-                    {
-                        Left = _lastRect.Left,
-                        Top = _lastRect.Top,
-                        Right = _lastRect.Left + _lockedWidth,
-                        Bottom = _lastRect.Top + _lockedHeight
-                    };
-                }
-                finally
-                {
-                    _applying = false;
-                }
-
-                return true;
-            }
-
-            if (!GetWindowRect(_hwnd, out var current) || current.Width <= 0 || current.Height <= 0)
-            {
-                return true;
-            }
-
-            if (current.Width == _lockedWidth && current.Height == _lockedHeight)
-            {
-                // Normal movement is allowed. Track the new location so a later resize can infer
-                // which opposite edge should remain anchored.
-                _lastRect = current;
-                return true;
-            }
-
-            var left = ResolveLockedOrigin(
-                current.Left,
-                current.Right,
-                _lastRect.Left,
-                _lastRect.Right,
-                _lockedWidth);
-            var top = ResolveLockedOrigin(
-                current.Top,
-                current.Bottom,
-                _lastRect.Top,
-                _lastRect.Bottom,
-                _lockedHeight);
 
             _applying = true;
             try
             {
+                if (IsZoomed(_hwnd))
+                {
+                    ShowWindow(_hwnd, SwRestore);
+                }
+
+                if (!GetWindowRect(_hwnd, out var current) || current.Width <= 0 || current.Height <= 0)
+                {
+                    return true;
+                }
+
+                if (current.Equals(_lockedRect))
+                {
+                    return true;
+                }
+
                 SetWindowPos(
                     _hwnd,
                     IntPtr.Zero,
-                    left,
-                    top,
-                    _lockedWidth,
-                    _lockedHeight,
+                    _lockedRect.Left,
+                    _lockedRect.Top,
+                    _lockedRect.Width,
+                    _lockedRect.Height,
                     SwpNoZOrder | SwpNoActivate | SwpNoOwnerZOrder);
+                return true;
             }
             finally
             {
                 _applying = false;
             }
-
-            _lastRect = new NativeRect
-            {
-                Left = left,
-                Top = top,
-                Right = left + _lockedWidth,
-                Bottom = top + _lockedHeight
-            };
-            return true;
-        }
-
-        private static int ResolveLockedOrigin(
-            int currentStart,
-            int currentEnd,
-            int previousStart,
-            int previousEnd,
-            int lockedLength)
-        {
-            var startMovement = Math.Abs(currentStart - previousStart);
-            var endMovement = Math.Abs(currentEnd - previousEnd);
-
-            // If the start edge moved more than the end edge, the user is dragging the start
-            // (left/top) edge. Keep the opposite edge visually pinned. Otherwise preserve the
-            // current start edge, which is correct for right/bottom-edge drags.
-            return startMovement > endMovement
-                ? currentEnd - lockedLength
-                : currentStart;
         }
     }
 
+    private static IntPtr MakePointLParam(int x, int y)
+    {
+        var packed = unchecked((y & 0xFFFF) << 16 | (x & 0xFFFF));
+        return new IntPtr(packed);
+    }
+
+    private delegate IntPtr LowLevelMouseProc(int nCode, IntPtr wParam, IntPtr lParam);
+
+    private delegate void WinEventDelegate(
+        IntPtr hWinEventHook,
+        uint eventType,
+        IntPtr hwnd,
+        int idObject,
+        int idChild,
+        uint idEventThread,
+        uint eventTime);
+
     [StructLayout(LayoutKind.Sequential)]
-    private struct NativeRect
+    private struct NativePoint
+    {
+        public int X;
+        public int Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MsllHookStruct
+    {
+        public NativePoint Point;
+        public uint MouseData;
+        public uint Flags;
+        public uint Time;
+        public UIntPtr ExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeRect : IEquatable<NativeRect>
     {
         public int Left;
         public int Top;
@@ -265,7 +382,52 @@ public sealed class WindowSizeLockService : IDisposable
 
         public readonly int Width => Right - Left;
         public readonly int Height => Bottom - Top;
+
+        public readonly bool Equals(NativeRect other)
+        {
+            return Left == other.Left && Top == other.Top && Right == other.Right && Bottom == other.Bottom;
+        }
+
+        public override readonly bool Equals(object? obj) => obj is NativeRect other && Equals(other);
+        public override readonly int GetHashCode() => HashCode.Combine(Left, Top, Right, Bottom);
     }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SetWindowsHookEx(
+        int idHook,
+        LowLevelMouseProc callback,
+        IntPtr module,
+        uint threadId);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool UnhookWindowsHookEx(IntPtr hook);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr CallNextHookEx(IntPtr hook, int nCode, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr SetWinEventHook(
+        uint eventMin,
+        uint eventMax,
+        IntPtr eventHook,
+        WinEventDelegate callback,
+        uint processId,
+        uint threadId,
+        uint flags);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool UnhookWinEvent(IntPtr hook);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr WindowFromPoint(NativePoint point);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetAncestor(IntPtr hwnd, int flags);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr SendMessage(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -304,4 +466,7 @@ public sealed class WindowSizeLockService : IDisposable
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool ShowWindow(IntPtr hwnd, int command);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr GetModuleHandle(string? moduleName);
 }

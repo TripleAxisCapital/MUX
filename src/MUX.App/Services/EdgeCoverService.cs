@@ -11,21 +11,14 @@ using System.Windows.Threading;
 namespace MUX.App.Services;
 
 /// <summary>
-/// Adds per-window black edge covers that begin as a thin frame and can be dragged inward
-/// independently from any side. Multiple target windows can be framed at the same time.
-/// Approaching an adjustable edge reveals a larger animated grab handle so thin covers remain
-/// easy to manipulate without permanently stealing clicks from the target application.
+/// Per-window black edge covers. Each side is one hardened transparent overlay HWND containing
+/// both the black cover and its proximity grab handle. Transparent activation space returns
+/// HTTRANSPARENT, so normal clicks continue through to the target application.
 /// </summary>
 public sealed class EdgeCoverService : IDisposable
 {
     private const int DwmwaExtendedFrameBounds = 9;
     private const int DwmwaCloaked = 14;
-    private const uint SwpNoZOrder = 0x0004;
-    private const uint SwpNoActivate = 0x0010;
-    private const uint SwpNoOwnerZOrder = 0x0200;
-    private const int WmMouseActivate = 0x0021;
-    private const int MaNoActivate = 3;
-    private static readonly IntPtr HwndTopmost = new(-1);
 
     private readonly Dictionary<IntPtr, EdgeCoverSession> _sessions = new();
     private readonly DispatcherTimer _refreshTimer;
@@ -43,13 +36,11 @@ public sealed class EdgeCoverService : IDisposable
 
     public event EventHandler? Changed;
 
-    public bool IsEnabledForWindow(IntPtr hwnd)
-    {
-        return hwnd != IntPtr.Zero && _sessions.ContainsKey(hwnd);
-    }
+    public bool IsEnabledForWindow(IntPtr hwnd) => hwnd != IntPtr.Zero && _sessions.ContainsKey(hwnd);
 
     /// <summary>
-    /// Toggles edge covers for one native top-level window. Returns the new enabled state.
+    /// Toggles the covers for one external top-level window. Overlay failures are contained to
+    /// this target; they must never terminate the MUX process.
     /// </summary>
     public bool ToggleWindow(IntPtr hwnd)
     {
@@ -60,8 +51,8 @@ public sealed class EdgeCoverService : IDisposable
 
         if (_sessions.Remove(hwnd, out var existing))
         {
-            existing.Dispose();
-            Changed?.Invoke(this, EventArgs.Empty);
+            SafeDispose(existing);
+            RaiseChangedSafely();
             return false;
         }
 
@@ -70,16 +61,25 @@ public sealed class EdgeCoverService : IDisposable
             return false;
         }
 
-        var session = new EdgeCoverSession(hwnd);
-        if (!session.Refresh(force: true))
+        EdgeCoverSession? session = null;
+        try
         {
-            session.Dispose();
+            session = new EdgeCoverSession(hwnd);
+            if (!session.Refresh(force: true, cursor: TryCursor()))
+            {
+                SafeDispose(session);
+                return false;
+            }
+
+            _sessions.Add(hwnd, session);
+            RaiseChangedSafely();
+            return true;
+        }
+        catch
+        {
+            SafeDispose(session);
             return false;
         }
-
-        _sessions.Add(hwnd, session);
-        Changed?.Invoke(this, EventArgs.Empty);
-        return true;
     }
 
     private void RefreshTimer_Tick(object? sender, EventArgs e)
@@ -89,18 +89,26 @@ public sealed class EdgeCoverService : IDisposable
             return;
         }
 
-        var hasCursor = GetCursorPos(out var cursor);
+        var cursor = TryCursor();
         List<IntPtr>? stale = null;
-        foreach (var pair in _sessions)
+
+        // Snapshot the collection: overlay teardown can indirectly pump WPF messages.
+        foreach (var pair in _sessions.ToArray())
         {
-            if (!pair.Value.Refresh(force: false))
+            try
             {
-                stale ??= new List<IntPtr>();
-                stale.Add(pair.Key);
-                continue;
+                if (pair.Value.Refresh(force: false, cursor))
+                {
+                    continue;
+                }
+            }
+            catch
+            {
+                // One broken overlay session is removed without taking down the application.
             }
 
-            pair.Value.UpdatePointer(hasCursor ? cursor : null);
+            stale ??= new List<IntPtr>();
+            stale.Add(pair.Key);
         }
 
         if (stale is null)
@@ -112,11 +120,16 @@ public sealed class EdgeCoverService : IDisposable
         {
             if (_sessions.Remove(hwnd, out var session))
             {
-                session.Dispose();
+                SafeDispose(session);
             }
         }
 
-        Changed?.Invoke(this, EventArgs.Empty);
+        RaiseChangedSafely();
+    }
+
+    private static NativePoint? TryCursor()
+    {
+        return GetCursorPos(out var point) ? point : null;
     }
 
     private static bool IsEligibleTarget(IntPtr hwnd)
@@ -127,12 +140,22 @@ public sealed class EdgeCoverService : IDisposable
         }
 
         GetWindowThreadProcessId(hwnd, out var processId);
-        if (processId == 0 || processId == Environment.ProcessId)
+        return processId != 0 && processId != Environment.ProcessId;
+    }
+
+    private void RaiseChangedSafely()
+    {
+        try { Changed?.Invoke(this, EventArgs.Empty); } catch { }
+    }
+
+    private static void SafeDispose(IDisposable? disposable)
+    {
+        if (disposable is null)
         {
-            return false;
+            return;
         }
 
-        return true;
+        try { disposable.Dispose(); } catch { }
     }
 
     public void Dispose()
@@ -146,9 +169,9 @@ public sealed class EdgeCoverService : IDisposable
         _refreshTimer.Stop();
         _refreshTimer.Tick -= RefreshTimer_Tick;
 
-        foreach (var session in _sessions.Values)
+        foreach (var session in _sessions.Values.ToArray())
         {
-            session.Dispose();
+            SafeDispose(session);
         }
         _sessions.Clear();
     }
@@ -164,10 +187,10 @@ public sealed class EdgeCoverService : IDisposable
     private sealed class EdgeCoverSession : IDisposable
     {
         private readonly IntPtr _targetHwnd;
-        private readonly EdgeBarWindow _topWindow;
-        private readonly EdgeBarWindow _rightWindow;
-        private readonly EdgeBarWindow _bottomWindow;
-        private readonly EdgeBarWindow _leftWindow;
+        private readonly EdgeOverlayWindow _top;
+        private readonly EdgeOverlayWindow _right;
+        private readonly EdgeOverlayWindow _bottom;
+        private readonly EdgeOverlayWindow _left;
 
         private NativeRect _lastTargetRect;
         private uint _lastDpi = 96;
@@ -177,41 +200,33 @@ public sealed class EdgeCoverService : IDisposable
         private int _bottomThicknessPx;
         private int _leftThicknessPx;
         private bool _initialized;
-        private bool _targetVisible;
         private bool _disposed;
 
         public EdgeCoverSession(IntPtr targetHwnd)
         {
             _targetHwnd = targetHwnd;
-
-            var dpi = GetDpiForWindow(targetHwnd);
-            if (dpi == 0)
-            {
-                dpi = 96;
-            }
-
-            _lastDpi = dpi;
-            _minimumThicknessPx = ScaleForDpi(4, dpi);
+            _lastDpi = EffectiveDpi(targetHwnd);
+            _minimumThicknessPx = ScaleForDpi(4, _lastDpi);
             _topThicknessPx = _minimumThicknessPx;
             _rightThicknessPx = _minimumThicknessPx;
             _bottomThicknessPx = _minimumThicknessPx;
             _leftThicknessPx = _minimumThicknessPx;
 
-            _topWindow = CreateBar(EdgeSide.Top);
-            _rightWindow = CreateBar(EdgeSide.Right);
-            _bottomWindow = CreateBar(EdgeSide.Bottom);
-            _leftWindow = CreateBar(EdgeSide.Left);
+            _top = CreateOverlay(EdgeSide.Top);
+            _right = CreateOverlay(EdgeSide.Right);
+            _bottom = CreateOverlay(EdgeSide.Bottom);
+            _left = CreateOverlay(EdgeSide.Left);
         }
 
-        private EdgeBarWindow CreateBar(EdgeSide side)
+        private EdgeOverlayWindow CreateOverlay(EdgeSide side)
         {
-            return new EdgeBarWindow(
+            return new EdgeOverlayWindow(
                 side,
                 () => GetThickness(side),
                 requested => SetThickness(side, requested));
         }
 
-        public bool Refresh(bool force)
+        public bool Refresh(bool force, NativePoint? cursor)
         {
             if (_disposed || !IsWindow(_targetHwnd))
             {
@@ -220,86 +235,29 @@ public sealed class EdgeCoverService : IDisposable
 
             if (!IsWindowVisible(_targetHwnd) || IsIconic(_targetHwnd) || IsWindowCloaked(_targetHwnd))
             {
-                _targetVisible = false;
                 HideAll();
                 return true;
             }
 
             if (!TryGetTargetRect(_targetHwnd, out var targetRect) || targetRect.Width <= 0 || targetRect.Height <= 0)
             {
-                _targetVisible = false;
                 HideAll();
                 return true;
             }
 
-            var dpi = GetDpiForWindow(_targetHwnd);
-            if (dpi == 0)
-            {
-                dpi = 96;
-            }
-            _lastDpi = dpi;
-            _minimumThicknessPx = ScaleForDpi(4, dpi);
-            _targetVisible = true;
-
+            _lastDpi = EffectiveDpi(_targetHwnd);
+            _minimumThicknessPx = ScaleForDpi(4, _lastDpi);
             ClampThicknesses(targetRect);
-
-            if (!force && _initialized && targetRect.Equals(_lastTargetRect) && AllBarsVisible())
-            {
-                return true;
-            }
-
             _lastTargetRect = targetRect;
             _initialized = true;
 
-            PositionBar(
-                _topWindow,
-                targetRect.Left,
-                targetRect.Top,
-                targetRect.Width,
-                _topThicknessPx);
-
-            PositionBar(
-                _bottomWindow,
-                targetRect.Left,
-                targetRect.Bottom - _bottomThicknessPx,
-                targetRect.Width,
-                _bottomThicknessPx);
-
-            PositionBar(
-                _leftWindow,
-                targetRect.Left,
-                targetRect.Top,
-                _leftThicknessPx,
-                targetRect.Height);
-
-            PositionBar(
-                _rightWindow,
-                targetRect.Right - _rightThicknessPx,
-                targetRect.Top,
-                _rightThicknessPx,
-                targetRect.Height);
-
+            // Update every pass, even if the target rectangle did not move, because the proximity
+            // handle follows the pointer independently of target geometry.
+            _top.Update(targetRect, _topThicknessPx, _lastDpi, cursor);
+            _right.Update(targetRect, _rightThicknessPx, _lastDpi, cursor);
+            _bottom.Update(targetRect, _bottomThicknessPx, _lastDpi, cursor);
+            _left.Update(targetRect, _leftThicknessPx, _lastDpi, cursor);
             return true;
-        }
-
-        public void UpdatePointer(NativePoint? cursor)
-        {
-            if (_disposed || !_initialized || !_targetVisible || cursor is null)
-            {
-                HideGrabHandles();
-                return;
-            }
-
-            var point = cursor.Value;
-            _topWindow.UpdateGrabHandle(point, _lastTargetRect, _topThicknessPx, _lastDpi);
-            _rightWindow.UpdateGrabHandle(point, _lastTargetRect, _rightThicknessPx, _lastDpi);
-            _bottomWindow.UpdateGrabHandle(point, _lastTargetRect, _bottomThicknessPx, _lastDpi);
-            _leftWindow.UpdateGrabHandle(point, _lastTargetRect, _leftThicknessPx, _lastDpi);
-        }
-
-        private void PositionBar(EdgeBarWindow window, int x, int y, int width, int height)
-        {
-            window.SetPixelBounds(x, y, Math.Max(1, width), Math.Max(1, height));
         }
 
         private int GetThickness(EdgeSide side)
@@ -328,57 +286,32 @@ public sealed class EdgeCoverService : IDisposable
 
             switch (side)
             {
-                case EdgeSide.Top:
-                    _topThicknessPx = next;
-                    break;
-                case EdgeSide.Right:
-                    _rightThicknessPx = next;
-                    break;
-                case EdgeSide.Bottom:
-                    _bottomThicknessPx = next;
-                    break;
-                case EdgeSide.Left:
-                    _leftThicknessPx = next;
-                    break;
+                case EdgeSide.Top: _topThicknessPx = next; break;
+                case EdgeSide.Right: _rightThicknessPx = next; break;
+                case EdgeSide.Bottom: _bottomThicknessPx = next; break;
+                case EdgeSide.Left: _leftThicknessPx = next; break;
             }
 
-            Refresh(force: true);
+            // Drag callbacks run on the UI dispatcher; refresh immediately for direct manipulation.
+            Refresh(force: true, cursor: TryCursor());
         }
 
         private void ClampThicknesses(NativeRect rect)
         {
             var verticalMax = Math.Max(_minimumThicknessPx, rect.Height);
             var horizontalMax = Math.Max(_minimumThicknessPx, rect.Width);
-
             _topThicknessPx = Math.Clamp(_topThicknessPx, _minimumThicknessPx, verticalMax);
             _bottomThicknessPx = Math.Clamp(_bottomThicknessPx, _minimumThicknessPx, verticalMax);
             _leftThicknessPx = Math.Clamp(_leftThicknessPx, _minimumThicknessPx, horizontalMax);
             _rightThicknessPx = Math.Clamp(_rightThicknessPx, _minimumThicknessPx, horizontalMax);
         }
 
-        private bool AllBarsVisible()
-        {
-            return _topWindow.IsVisible &&
-                   _rightWindow.IsVisible &&
-                   _bottomWindow.IsVisible &&
-                   _leftWindow.IsVisible;
-        }
-
         private void HideAll()
         {
-            _topWindow.HideBar();
-            _rightWindow.HideBar();
-            _bottomWindow.HideBar();
-            _leftWindow.HideBar();
-            HideGrabHandles();
-        }
-
-        private void HideGrabHandles()
-        {
-            _topWindow.HideGrabHandle();
-            _rightWindow.HideGrabHandle();
-            _bottomWindow.HideGrabHandle();
-            _leftWindow.HideGrabHandle();
+            _top.Park();
+            _right.Park();
+            _bottom.Park();
+            _left.Park();
         }
 
         public void Dispose()
@@ -389,300 +322,51 @@ public sealed class EdgeCoverService : IDisposable
             }
 
             _disposed = true;
-            _topWindow.CloseBar();
-            _rightWindow.CloseBar();
-            _bottomWindow.CloseBar();
-            _leftWindow.CloseBar();
-        }
-    }
-
-    private sealed class EdgeBarWindow : Window
-    {
-        private readonly EdgeSide _side;
-        private readonly Func<int> _getCurrentThickness;
-        private readonly Action<int> _setThickness;
-        private readonly EdgeGrabHandleWindow _grabHandle;
-        private HwndSource? _source;
-        private bool _dragging;
-        private NativePoint _dragStartPoint;
-        private int _dragStartThickness;
-        private bool _closing;
-
-        public EdgeBarWindow(
-            EdgeSide side,
-            Func<int> getCurrentThickness,
-            Action<int> setThickness)
-        {
-            _side = side;
-            _getCurrentThickness = getCurrentThickness;
-            _setThickness = setThickness;
-            _grabHandle = new EdgeGrabHandleWindow(side, getCurrentThickness, setThickness);
-
-            WindowStyle = WindowStyle.None;
-            ResizeMode = ResizeMode.NoResize;
-            AllowsTransparency = true;
-            Background = new SolidColorBrush(Colors.Black);
-            ShowInTaskbar = false;
-            ShowActivated = false;
-            Topmost = true;
-            WindowStartupLocation = WindowStartupLocation.Manual;
-            Left = -32000;
-            Top = -32000;
-            Width = 1;
-            Height = 1;
-            Focusable = false;
-            Cursor = side is EdgeSide.Top or EdgeSide.Bottom
-                ? Cursors.SizeNS
-                : Cursors.SizeWE;
-
-            MouseLeftButtonDown += EdgeBar_MouseLeftButtonDown;
-            MouseMove += EdgeBar_MouseMove;
-            MouseLeftButtonUp += EdgeBar_MouseLeftButtonUp;
-            LostMouseCapture += EdgeBar_LostMouseCapture;
-        }
-
-        protected override void OnSourceInitialized(EventArgs e)
-        {
-            base.OnSourceInitialized(e);
-            var hwnd = new WindowInteropHelper(this).Handle;
-            _source = HwndSource.FromHwnd(hwnd);
-            _source?.AddHook(WndProc);
-        }
-
-        protected override void OnClosed(EventArgs e)
-        {
-            if (_source is not null)
-            {
-                _source.RemoveHook(WndProc);
-                _source = null;
-            }
-
-            base.OnClosed(e);
-        }
-
-        private IntPtr WndProc(
-            IntPtr hwnd,
-            int msg,
-            IntPtr wParam,
-            IntPtr lParam,
-            ref bool handled)
-        {
-            if (msg == WmMouseActivate)
-            {
-                handled = true;
-                return new IntPtr(MaNoActivate);
-            }
-
-            return IntPtr.Zero;
-        }
-
-        public void SetPixelBounds(int x, int y, int width, int height)
-        {
-            if (_closing)
-            {
-                return;
-            }
-
-            if (!IsVisible)
-            {
-                Opacity = 0;
-                Show();
-            }
-
-            var hwnd = new WindowInteropHelper(this).Handle;
-            if (hwnd == IntPtr.Zero)
-            {
-                return;
-            }
-
-            SetWindowPos(
-                hwnd,
-                IntPtr.Zero,
-                x,
-                y,
-                Math.Max(1, width),
-                Math.Max(1, height),
-                SwpNoZOrder | SwpNoActivate | SwpNoOwnerZOrder);
-
-            if (Opacity != 1)
-            {
-                Opacity = 1;
-            }
-        }
-
-        public void UpdateGrabHandle(NativePoint cursor, NativeRect targetRect, int thickness, uint dpi)
-        {
-            if (_closing || _grabHandle.IsDragging)
-            {
-                return;
-            }
-
-            var activationDistance = ScaleForDpi(28, dpi);
-            var handleShort = ScaleForDpi(18, dpi);
-            var handleLong = ScaleForDpi(46, dpi);
-            var edgePadding = ScaleForDpi(8, dpi);
-
-            var horizontal = _side is EdgeSide.Top or EdgeSide.Bottom;
-            var boundary = _side switch
-            {
-                EdgeSide.Top => targetRect.Top + thickness,
-                EdgeSide.Bottom => targetRect.Bottom - thickness,
-                EdgeSide.Left => targetRect.Left + thickness,
-                EdgeSide.Right => targetRect.Right - thickness,
-                _ => 0
-            };
-
-            var perpendicularDistance = horizontal
-                ? Math.Abs(cursor.Y - boundary)
-                : Math.Abs(cursor.X - boundary);
-
-            var alongInside = horizontal
-                ? cursor.X >= targetRect.Left - activationDistance && cursor.X <= targetRect.Right + activationDistance
-                : cursor.Y >= targetRect.Top - activationDistance && cursor.Y <= targetRect.Bottom + activationDistance;
-
-            if (perpendicularDistance > activationDistance || !alongInside)
-            {
-                _grabHandle.HideAnimated();
-                return;
-            }
-
-            if (horizontal)
-            {
-                var width = handleLong;
-                var height = handleShort;
-                var centerX = ClampHandleCenter(cursor.X, targetRect.Left, targetRect.Right, width, edgePadding);
-                _grabHandle.ShowAt(centerX - width / 2, boundary - height / 2, width, height);
-            }
-            else
-            {
-                var width = handleShort;
-                var height = handleLong;
-                var centerY = ClampHandleCenter(cursor.Y, targetRect.Top, targetRect.Bottom, height, edgePadding);
-                _grabHandle.ShowAt(boundary - width / 2, centerY - height / 2, width, height);
-            }
-        }
-
-        private static int ClampHandleCenter(int desired, int start, int end, int handleLength, int padding)
-        {
-            var half = handleLength / 2;
-            var minimum = start + half + padding;
-            var maximum = end - half - padding;
-            if (minimum > maximum)
-            {
-                return start + Math.Max(0, end - start) / 2;
-            }
-
-            return Math.Clamp(desired, minimum, maximum);
-        }
-
-        public void HideBar()
-        {
-            HideGrabHandle();
-            if (!_closing && IsVisible)
-            {
-                Hide();
-            }
-        }
-
-        public void HideGrabHandle()
-        {
-            _grabHandle.HideAnimated();
-        }
-
-        public void CloseBar()
-        {
-            if (_closing)
-            {
-                return;
-            }
-
-            _closing = true;
-            EndDrag();
-            _grabHandle.CloseHandle();
-            Close();
-        }
-
-        private void EdgeBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-        {
-            if (e.ChangedButton != MouseButton.Left || !GetCursorPos(out _dragStartPoint))
-            {
-                return;
-            }
-
-            _dragging = true;
-            _dragStartThickness = _getCurrentThickness();
-            CaptureMouse();
-            e.Handled = true;
-        }
-
-        private void EdgeBar_MouseMove(object sender, MouseEventArgs e)
-        {
-            if (!_dragging || e.LeftButton != MouseButtonState.Pressed || !GetCursorPos(out var currentPoint))
-            {
-                return;
-            }
-
-            _setThickness(_dragStartThickness + CalculateDragDelta(_side, _dragStartPoint, currentPoint));
-            e.Handled = true;
-        }
-
-        private void EdgeBar_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
-        {
-            if (!_dragging || e.ChangedButton != MouseButton.Left)
-            {
-                return;
-            }
-
-            EndDrag();
-            e.Handled = true;
-        }
-
-        private void EdgeBar_LostMouseCapture(object sender, MouseEventArgs e)
-        {
-            _dragging = false;
-        }
-
-        private void EndDrag()
-        {
-            if (!_dragging)
-            {
-                return;
-            }
-
-            _dragging = false;
-            if (Mouse.Captured == this)
-            {
-                ReleaseMouseCapture();
-            }
+            SafeDispose(_top);
+            SafeDispose(_right);
+            SafeDispose(_bottom);
+            SafeDispose(_left);
         }
     }
 
     /// <summary>
-    /// A temporary, much larger target that appears only when the pointer approaches a cover edge.
-    /// It is deliberately a separate window so the normal browser/app surface remains clickable
-    /// everywhere except the visible grab handle itself.
+    /// One HWND per side. The black cover and the animated proximity handle share this window;
+    /// transparent pixels report HTTRANSPARENT so they never create a dead click strip.
     /// </summary>
-    private sealed class EdgeGrabHandleWindow : Window
+    private sealed class EdgeOverlayWindow : Window, IDisposable
     {
-        private static readonly TimeSpan RevealDuration = TimeSpan.FromMilliseconds(110);
-        private static readonly TimeSpan HideDuration = TimeSpan.FromMilliseconds(80);
+        private const int WmMouseActivate = 0x0021;
+        private const int WmNcHitTest = 0x0084;
+        private const int MaNoActivate = 3;
+        private const int HtClient = 1;
+        private const int HtTransparent = -1;
+        private const uint SwpNoActivate = 0x0010;
+        private const uint SwpNoOwnerZOrder = 0x0200;
+        private static readonly IntPtr HwndTopmost = new(-1);
+        private static readonly TimeSpan HandleAnimation = TimeSpan.FromMilliseconds(105);
 
         private readonly EdgeSide _side;
         private readonly Func<int> _getCurrentThickness;
         private readonly Action<int> _setThickness;
-        private readonly ScaleTransform _scaleTransform;
+        private readonly Canvas _canvas;
+        private readonly Border _cover;
+        private readonly Border _handle;
+        private readonly ScaleTransform _handleScale;
+
         private HwndSource? _source;
-        private bool _presented;
+        private NativeRect _targetRect;
+        private NativeRect _overlayRect;
+        private int _thicknessPx;
+        private int _activationPx;
+        private uint _dpi = 96;
+        private bool _hot;
         private bool _dragging;
-        private bool _closing;
-        private long _animationVersion;
         private NativePoint _dragStartPoint;
         private int _dragStartThickness;
+        private bool _shown;
+        private bool _disposed;
 
-        public EdgeGrabHandleWindow(
-            EdgeSide side,
-            Func<int> getCurrentThickness,
-            Action<int> setThickness)
+        public EdgeOverlayWindow(EdgeSide side, Func<int> getCurrentThickness, Action<int> setThickness)
         {
             _side = side;
             _getCurrentThickness = getCurrentThickness;
@@ -699,31 +383,29 @@ public sealed class EdgeCoverService : IDisposable
             WindowStartupLocation = WindowStartupLocation.Manual;
             Left = -32000;
             Top = -32000;
-            Width = side is EdgeSide.Top or EdgeSide.Bottom ? 46 : 18;
-            Height = side is EdgeSide.Top or EdgeSide.Bottom ? 18 : 46;
-            Opacity = 0;
+            Width = 1;
+            Height = 1;
+
+            _canvas = new Canvas { Background = Brushes.Transparent, ClipToBounds = true };
+            _cover = new Border { Background = Brushes.Black, SnapsToDevicePixels = true };
+            _handleScale = new ScaleTransform(0.84, 0.84);
+            _handle = BuildHandle(side, _handleScale);
+            _canvas.Children.Add(_cover);
+            _canvas.Children.Add(_handle);
+            Content = _canvas;
+
             Cursor = side is EdgeSide.Top or EdgeSide.Bottom ? Cursors.SizeNS : Cursors.SizeWE;
-
-            _scaleTransform = new ScaleTransform(0.82, 0.82);
-            RenderTransform = _scaleTransform;
-            RenderTransformOrigin = new Point(0.5, 0.5);
-            Content = BuildHandleVisual(side);
-
-            MouseLeftButtonDown += Handle_MouseLeftButtonDown;
-            MouseMove += Handle_MouseMove;
-            MouseLeftButtonUp += Handle_MouseLeftButtonUp;
-            LostMouseCapture += Handle_LostMouseCapture;
+            MouseLeftButtonDown += MouseLeftButtonDownHandler;
+            MouseMove += MouseMoveHandler;
+            MouseLeftButtonUp += MouseLeftButtonUpHandler;
+            LostMouseCapture += LostMouseCaptureHandler;
         }
 
-        public bool IsDragging => _dragging;
-
-        private static UIElement BuildHandleVisual(EdgeSide side)
+        private static Border BuildHandle(EdgeSide side, ScaleTransform scale)
         {
             var grip = new StackPanel
             {
-                Orientation = side is EdgeSide.Top or EdgeSide.Bottom
-                    ? Orientation.Vertical
-                    : Orientation.Horizontal,
+                Orientation = side is EdgeSide.Top or EdgeSide.Bottom ? Orientation.Vertical : Orientation.Horizontal,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center
             };
@@ -745,11 +427,15 @@ public sealed class EdgeCoverService : IDisposable
 
             return new Border
             {
-                Background = new SolidColorBrush(Color.FromArgb(246, 24, 24, 27)),
+                Background = new SolidColorBrush(Color.FromArgb(248, 24, 24, 27)),
                 BorderBrush = new SolidColorBrush(Color.FromRgb(92, 92, 101)),
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(9),
                 Child = grip,
+                Opacity = 0,
+                RenderTransform = scale,
+                RenderTransformOrigin = new Point(0.5, 0.5),
+                IsHitTestVisible = false,
                 SnapsToDevicePixels = true
             };
         }
@@ -766,18 +452,13 @@ public sealed class EdgeCoverService : IDisposable
         {
             if (_source is not null)
             {
-                _source.RemoveHook(WndProc);
+                try { _source.RemoveHook(WndProc); } catch { }
                 _source = null;
             }
             base.OnClosed(e);
         }
 
-        private IntPtr WndProc(
-            IntPtr hwnd,
-            int msg,
-            IntPtr wParam,
-            IntPtr lParam,
-            ref bool handled)
+        private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
         {
             if (msg == WmMouseActivate)
             {
@@ -785,125 +466,249 @@ public sealed class EdgeCoverService : IDisposable
                 return new IntPtr(MaNoActivate);
             }
 
+            if (msg == WmNcHitTest)
+            {
+                var point = PointFromLParam(lParam);
+                handled = true;
+                return new IntPtr(IsInteractivePoint(point) ? HtClient : HtTransparent);
+            }
+
             return IntPtr.Zero;
         }
 
-        public void ShowAt(int x, int y, int width, int height)
+        public void Update(NativeRect targetRect, int thicknessPx, uint dpi, NativePoint? cursor)
         {
-            if (_closing)
+            if (_disposed)
             {
                 return;
             }
 
-            if (!IsVisible)
+            _targetRect = targetRect;
+            _thicknessPx = Math.Max(1, thicknessPx);
+            _dpi = Math.Max(96u, dpi);
+            _activationPx = ScaleForDpi(30, _dpi);
+            _overlayRect = CalculateOverlayRect(targetRect, _thicknessPx, _activationPx, _side);
+
+            EnsureShownAndPositioned();
+            UpdateCoverVisual();
+            UpdateHandleVisual(cursor);
+        }
+
+        private void EnsureShownAndPositioned()
+        {
+            if (!_shown)
             {
+                Opacity = 0;
                 Show();
+                _shown = true;
             }
 
             var hwnd = new WindowInteropHelper(this).Handle;
+            if (hwnd == IntPtr.Zero)
+            {
+                return;
+            }
+
+            SetWindowPos(
+                hwnd,
+                HwndTopmost,
+                _overlayRect.Left,
+                _overlayRect.Top,
+                Math.Max(1, _overlayRect.Width),
+                Math.Max(1, _overlayRect.Height),
+                SwpNoActivate | SwpNoOwnerZOrder);
+            Opacity = 1;
+        }
+
+        private void UpdateCoverVisual()
+        {
+            var scale = _dpi / 96.0;
+            var overlayWidth = Math.Max(1.0, _overlayRect.Width / scale);
+            var overlayHeight = Math.Max(1.0, _overlayRect.Height / scale);
+            var thickness = Math.Max(1.0, _thicknessPx / scale);
+            var activation = Math.Max(0.0, _activationPx / scale);
+
+            _canvas.Width = overlayWidth;
+            _canvas.Height = overlayHeight;
+
+            if (_side is EdgeSide.Top or EdgeSide.Bottom)
+            {
+                _cover.Width = overlayWidth;
+                _cover.Height = Math.Min(overlayHeight, thickness);
+                Canvas.SetLeft(_cover, 0);
+                Canvas.SetTop(_cover, _side == EdgeSide.Top ? 0 : Math.Min(activation, overlayHeight - _cover.Height));
+            }
+            else
+            {
+                _cover.Width = Math.Min(overlayWidth, thickness);
+                _cover.Height = overlayHeight;
+                Canvas.SetTop(_cover, 0);
+                Canvas.SetLeft(_cover, _side == EdgeSide.Left ? 0 : Math.Min(activation, overlayWidth - _cover.Width));
+            }
+        }
+
+        private void UpdateHandleVisual(NativePoint? cursor)
+        {
+            if (cursor is null || _dragging)
+            {
+                SetHot(_dragging);
+                return;
+            }
+
+            var point = cursor.Value;
+            var boundary = InnerBoundary();
+            var along = _side is EdgeSide.Top or EdgeSide.Bottom
+                ? point.X >= _targetRect.Left && point.X <= _targetRect.Right
+                : point.Y >= _targetRect.Top && point.Y <= _targetRect.Bottom;
+            var distance = _side is EdgeSide.Top or EdgeSide.Bottom
+                ? Math.Abs(point.Y - boundary)
+                : Math.Abs(point.X - boundary);
+
+            var hot = along && distance <= _activationPx;
+            SetHot(hot);
+            if (!hot)
+            {
+                return;
+            }
+
+            var scale = _dpi / 96.0;
+            var shortPx = ScaleForDpi(18, _dpi);
+            var longPx = ScaleForDpi(46, _dpi);
+            var paddingPx = ScaleForDpi(8, _dpi);
+
+            if (_side is EdgeSide.Top or EdgeSide.Bottom)
+            {
+                _handle.Width = longPx / scale;
+                _handle.Height = shortPx / scale;
+                var center = ClampCenter(point.X, _targetRect.Left, _targetRect.Right, longPx, paddingPx);
+                Canvas.SetLeft(_handle, (center - longPx / 2 - _overlayRect.Left) / scale);
+                Canvas.SetTop(_handle, (boundary - shortPx / 2 - _overlayRect.Top) / scale);
+            }
+            else
+            {
+                _handle.Width = shortPx / scale;
+                _handle.Height = longPx / scale;
+                var center = ClampCenter(point.Y, _targetRect.Top, _targetRect.Bottom, longPx, paddingPx);
+                Canvas.SetLeft(_handle, (boundary - shortPx / 2 - _overlayRect.Left) / scale);
+                Canvas.SetTop(_handle, (center - longPx / 2 - _overlayRect.Top) / scale);
+            }
+        }
+
+        private void SetHot(bool hot)
+        {
+            if (_hot == hot)
+            {
+                return;
+            }
+
+            _hot = hot;
+            var easing = new CubicEase { EasingMode = hot ? EasingMode.EaseOut : EasingMode.EaseIn };
+            _handle.BeginAnimation(
+                OpacityProperty,
+                new DoubleAnimation(_handle.Opacity, hot ? 1.0 : 0.0, HandleAnimation) { EasingFunction = easing },
+                HandoffBehavior.SnapshotAndReplace);
+            _handleScale.BeginAnimation(
+                ScaleTransform.ScaleXProperty,
+                new DoubleAnimation(_handleScale.ScaleX, hot ? 1.0 : 0.84, HandleAnimation) { EasingFunction = easing },
+                HandoffBehavior.SnapshotAndReplace);
+            _handleScale.BeginAnimation(
+                ScaleTransform.ScaleYProperty,
+                new DoubleAnimation(_handleScale.ScaleY, hot ? 1.0 : 0.84, HandleAnimation) { EasingFunction = easing },
+                HandoffBehavior.SnapshotAndReplace);
+        }
+
+        private bool IsInteractivePoint(NativePoint point)
+        {
+            if (_disposed || !_shown)
+            {
+                return false;
+            }
+
+            var insideSpan = _side is EdgeSide.Top or EdgeSide.Bottom
+                ? point.X >= _targetRect.Left && point.X < _targetRect.Right
+                : point.Y >= _targetRect.Top && point.Y < _targetRect.Bottom;
+            if (!insideSpan)
+            {
+                return false;
+            }
+
+            var onBlackCover = _side switch
+            {
+                EdgeSide.Top => point.Y >= _targetRect.Top && point.Y < _targetRect.Top + _thicknessPx,
+                EdgeSide.Bottom => point.Y >= _targetRect.Bottom - _thicknessPx && point.Y < _targetRect.Bottom,
+                EdgeSide.Left => point.X >= _targetRect.Left && point.X < _targetRect.Left + _thicknessPx,
+                EdgeSide.Right => point.X >= _targetRect.Right - _thicknessPx && point.X < _targetRect.Right,
+                _ => false
+            };
+
+            if (onBlackCover)
+            {
+                return true;
+            }
+
+            var boundary = InnerBoundary();
+            var nearBoundary = _side is EdgeSide.Top or EdgeSide.Bottom
+                ? Math.Abs(point.Y - boundary) <= _activationPx
+                : Math.Abs(point.X - boundary) <= _activationPx;
+            return nearBoundary;
+        }
+
+        private int InnerBoundary()
+        {
+            return _side switch
+            {
+                EdgeSide.Top => _targetRect.Top + _thicknessPx,
+                EdgeSide.Bottom => _targetRect.Bottom - _thicknessPx,
+                EdgeSide.Left => _targetRect.Left + _thicknessPx,
+                EdgeSide.Right => _targetRect.Right - _thicknessPx,
+                _ => 0
+            };
+        }
+
+        public void Park()
+        {
+            if (_disposed || !_shown)
+            {
+                return;
+            }
+
+            _hot = false;
+            _handle.BeginAnimation(OpacityProperty, null);
+            _handle.Opacity = 0;
+            var hwnd = new WindowInteropHelper(this).Handle;
             if (hwnd != IntPtr.Zero)
             {
-                SetWindowPos(
-                    hwnd,
-                    HwndTopmost,
-                    x,
-                    y,
-                    Math.Max(1, width),
-                    Math.Max(1, height),
-                    SwpNoActivate | SwpNoOwnerZOrder);
+                SetWindowPos(hwnd, IntPtr.Zero, -32000, -32000, 1, 1, SwpNoActivate | SwpNoOwnerZOrder);
             }
-
-            if (_presented)
-            {
-                return;
-            }
-
-            _presented = true;
-            _animationVersion++;
-            BeginAnimation(OpacityProperty, null);
-            _scaleTransform.BeginAnimation(ScaleTransform.ScaleXProperty, null);
-            _scaleTransform.BeginAnimation(ScaleTransform.ScaleYProperty, null);
-            Opacity = Math.Min(Opacity, 0.01);
-            _scaleTransform.ScaleX = 0.82;
-            _scaleTransform.ScaleY = 0.82;
-
-            var easing = new CubicEase { EasingMode = EasingMode.EaseOut };
-            BeginAnimation(
-                OpacityProperty,
-                new DoubleAnimation(Opacity, 1, RevealDuration) { EasingFunction = easing });
-            _scaleTransform.BeginAnimation(
-                ScaleTransform.ScaleXProperty,
-                new DoubleAnimation(0.82, 1, RevealDuration) { EasingFunction = easing });
-            _scaleTransform.BeginAnimation(
-                ScaleTransform.ScaleYProperty,
-                new DoubleAnimation(0.82, 1, RevealDuration) { EasingFunction = easing });
+            Opacity = 0;
         }
 
-        public void HideAnimated()
+        private void MouseLeftButtonDownHandler(object sender, MouseButtonEventArgs e)
         {
-            if (_closing || !_presented || _dragging)
-            {
-                return;
-            }
-
-            _presented = false;
-            var version = ++_animationVersion;
-            var animation = new DoubleAnimation(Opacity, 0, HideDuration)
-            {
-                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn }
-            };
-            animation.Completed += (_, _) =>
-            {
-                if (_closing || _presented || _dragging || version != _animationVersion)
-                {
-                    return;
-                }
-
-                BeginAnimation(OpacityProperty, null);
-                Opacity = 0;
-                Hide();
-            };
-            BeginAnimation(OpacityProperty, animation);
-        }
-
-        public void CloseHandle()
-        {
-            if (_closing)
-            {
-                return;
-            }
-
-            _closing = true;
-            EndDrag();
-            Close();
-        }
-
-        private void Handle_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-        {
-            if (e.ChangedButton != MouseButton.Left || !GetCursorPos(out _dragStartPoint))
+            if (_disposed || e.ChangedButton != MouseButton.Left || !GetCursorPos(out _dragStartPoint))
             {
                 return;
             }
 
             _dragging = true;
-            _presented = true;
             _dragStartThickness = _getCurrentThickness();
             CaptureMouse();
+            SetHot(true);
             e.Handled = true;
         }
 
-        private void Handle_MouseMove(object sender, MouseEventArgs e)
+        private void MouseMoveHandler(object sender, MouseEventArgs e)
         {
-            if (!_dragging || e.LeftButton != MouseButtonState.Pressed || !GetCursorPos(out var currentPoint))
+            if (!_dragging || e.LeftButton != MouseButtonState.Pressed || !GetCursorPos(out var current))
             {
                 return;
             }
 
-            _setThickness(_dragStartThickness + CalculateDragDelta(_side, _dragStartPoint, currentPoint));
+            _setThickness(_dragStartThickness + CalculateDragDelta(_side, _dragStartPoint, current));
             e.Handled = true;
         }
 
-        private void Handle_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        private void MouseLeftButtonUpHandler(object sender, MouseButtonEventArgs e)
         {
             if (!_dragging || e.ChangedButton != MouseButton.Left)
             {
@@ -914,7 +719,7 @@ public sealed class EdgeCoverService : IDisposable
             e.Handled = true;
         }
 
-        private void Handle_LostMouseCapture(object sender, MouseEventArgs e)
+        private void LostMouseCaptureHandler(object sender, MouseEventArgs e)
         {
             _dragging = false;
         }
@@ -932,6 +737,82 @@ public sealed class EdgeCoverService : IDisposable
                 ReleaseMouseCapture();
             }
         }
+
+        public void Dispose()
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
+            try { EndDrag(); } catch { }
+            try
+            {
+                if (IsVisible)
+                {
+                    Close();
+                }
+            }
+            catch { }
+        }
+
+        private static NativeRect CalculateOverlayRect(NativeRect target, int thickness, int activation, EdgeSide side)
+        {
+            return side switch
+            {
+                EdgeSide.Top => new NativeRect(
+                    target.Left,
+                    target.Top,
+                    target.Right,
+                    Math.Min(target.Bottom, target.Top + thickness + activation)),
+                EdgeSide.Bottom => new NativeRect(
+                    target.Left,
+                    Math.Max(target.Top, target.Bottom - thickness - activation),
+                    target.Right,
+                    target.Bottom),
+                EdgeSide.Left => new NativeRect(
+                    target.Left,
+                    target.Top,
+                    Math.Min(target.Right, target.Left + thickness + activation),
+                    target.Bottom),
+                EdgeSide.Right => new NativeRect(
+                    Math.Max(target.Left, target.Right - thickness - activation),
+                    target.Top,
+                    target.Right,
+                    target.Bottom),
+                _ => target
+            };
+        }
+
+        private static int ClampCenter(int desired, int start, int end, int length, int padding)
+        {
+            var half = length / 2;
+            var min = start + half + padding;
+            var max = end - half - padding;
+            return min <= max ? Math.Clamp(desired, min, max) : start + Math.Max(0, end - start) / 2;
+        }
+
+        private static NativePoint PointFromLParam(IntPtr lParam)
+        {
+            var value = unchecked((long)lParam.ToInt64());
+            return new NativePoint
+            {
+                X = unchecked((short)(value & 0xFFFF)),
+                Y = unchecked((short)((value >> 16) & 0xFFFF))
+            };
+        }
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool SetWindowPos(
+            IntPtr hwnd,
+            IntPtr insertAfter,
+            int x,
+            int y,
+            int width,
+            int height,
+            uint flags);
     }
 
     private static int CalculateDragDelta(EdgeSide side, NativePoint start, NativePoint current)
@@ -954,26 +835,20 @@ public sealed class EdgeCoverService : IDisposable
         public int Right;
         public int Bottom;
 
+        public NativeRect(int left, int top, int right, int bottom)
+        {
+            Left = left;
+            Top = top;
+            Right = right;
+            Bottom = bottom;
+        }
+
         public readonly int Width => Right - Left;
         public readonly int Height => Bottom - Top;
-
-        public readonly bool Equals(NativeRect other)
-        {
-            return Left == other.Left &&
-                   Top == other.Top &&
-                   Right == other.Right &&
-                   Bottom == other.Bottom;
-        }
-
-        public override readonly bool Equals(object? obj)
-        {
-            return obj is NativeRect other && Equals(other);
-        }
-
-        public override readonly int GetHashCode()
-        {
-            return HashCode.Combine(Left, Top, Right, Bottom);
-        }
+        public readonly bool Equals(NativeRect other) =>
+            Left == other.Left && Top == other.Top && Right == other.Right && Bottom == other.Bottom;
+        public override readonly bool Equals(object? obj) => obj is NativeRect other && Equals(other);
+        public override readonly int GetHashCode() => HashCode.Combine(Left, Top, Right, Bottom);
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -1005,10 +880,15 @@ public sealed class EdgeCoverService : IDisposable
         return DwmGetWindowAttribute(hwnd, DwmwaCloaked, out cloaked, sizeof(int)) == 0 && cloaked != 0;
     }
 
+    private static uint EffectiveDpi(IntPtr hwnd)
+    {
+        var dpi = GetDpiForWindow(hwnd);
+        return dpi == 0 ? 96u : Math.Max(96u, dpi);
+    }
+
     private static int ScaleForDpi(int value, uint dpi)
     {
-        var effectiveDpi = Math.Max(96u, dpi);
-        return Math.Max(1, (int)Math.Round(value * effectiveDpi / 96.0));
+        return Math.Max(1, (int)Math.Round(value * Math.Max(96u, dpi) / 96.0));
     }
 
     [DllImport("user32.dll")]
@@ -1037,28 +917,9 @@ public sealed class EdgeCoverService : IDisposable
     [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
 
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool SetWindowPos(
-        IntPtr hwnd,
-        IntPtr hwndInsertAfter,
-        int x,
-        int y,
-        int width,
-        int height,
-        uint flags);
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmGetWindowAttribute(IntPtr hwnd, int attribute, out NativeRect value, int size);
 
     [DllImport("dwmapi.dll")]
-    private static extern int DwmGetWindowAttribute(
-        IntPtr hwnd,
-        int attribute,
-        out NativeRect value,
-        int size);
-
-    [DllImport("dwmapi.dll")]
-    private static extern int DwmGetWindowAttribute(
-        IntPtr hwnd,
-        int attribute,
-        out int value,
-        int size);
+    private static extern int DwmGetWindowAttribute(IntPtr hwnd, int attribute, out int value, int size);
 }

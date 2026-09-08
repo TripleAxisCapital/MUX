@@ -19,8 +19,15 @@ public partial class CaptionResizePillWindow
     {
         if (_edgeCoverService is null)
         {
-            _edgeCoverService = new EdgeCoverService();
-            _edgeCoverService.Changed += EdgeCoverService_Changed;
+            try
+            {
+                _edgeCoverService = new EdgeCoverService();
+                _edgeCoverService.Changed += EdgeCoverService_Changed;
+            }
+            catch
+            {
+                _edgeCoverService = null;
+            }
         }
 
         EnsureEdgeCoverButton();
@@ -117,23 +124,43 @@ public partial class CaptionResizePillWindow
             return;
         }
 
-        _edgeCoverService.ToggleWindow(_targetHwnd);
+        try
+        {
+            _edgeCoverService.ToggleWindow(_targetHwnd);
+        }
+        catch
+        {
+            // Edge-cover UI is auxiliary. A failed overlay must never be able to terminate MUX.
+            if (_edgeCoverButton is not null)
+            {
+                _edgeCoverButton.ToolTip = "MUX could not create the edge covers for this window.";
+            }
+            return;
+        }
+
         _lastEdgeCoverVisualTarget = _targetHwnd;
         UpdateEdgeCoverVisual();
 
-        // The new black bars are topmost overlays. Reassert the pill last so its controls stay
-        // accessible even when the top cover is dragged down across the target caption.
+        // Reassert the pill above the covers without allowing a shutdown/layout race to surface as
+        // an unhandled WPF exception.
         Dispatcher.BeginInvoke(
             DispatcherPriority.Background,
             new Action(() =>
             {
-                if (!IsVisible)
+                try
                 {
-                    return;
-                }
+                    if (!IsVisible)
+                    {
+                        return;
+                    }
 
-                Topmost = false;
-                Topmost = true;
+                    Topmost = false;
+                    Topmost = true;
+                }
+                catch
+                {
+                    // The pill may be closing while this queued callback runs.
+                }
             }));
     }
 
@@ -150,7 +177,7 @@ public partial class CaptionResizePillWindow
 
     private void EdgeCoverService_Changed(object? sender, EventArgs e)
     {
-        UpdateEdgeCoverVisual();
+        try { UpdateEdgeCoverVisual(); } catch { }
     }
 
     private void UpdateEdgeCoverVisual()
@@ -174,7 +201,7 @@ public partial class CaptionResizePillWindow
         _edgeCoverButton.ToolTip = _targetHwnd == IntPtr.Zero
             ? "Window edge covers · Point at a window first"
             : active
-                ? "Window edge covers · On for this window · Drag any black edge inward"
+                ? "Window edge covers · On · Approach any black edge for the grab handle"
                 : "Window edge covers · Off for this window";
     }
 
@@ -189,8 +216,12 @@ public partial class CaptionResizePillWindow
 
         if (_edgeCoverService is not null)
         {
-            _edgeCoverService.Changed -= EdgeCoverService_Changed;
-            _edgeCoverService.Dispose();
+            try
+            {
+                _edgeCoverService.Changed -= EdgeCoverService_Changed;
+                _edgeCoverService.Dispose();
+            }
+            catch { }
             _edgeCoverService = null;
         }
 

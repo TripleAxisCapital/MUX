@@ -116,7 +116,7 @@ public partial class CaptionResizePillWindow
             Width = 14,
             Height = 34,
             Padding = new Thickness(0),
-            ToolTip = "Lock window size",
+            ToolTip = "Lock window position and size",
             Content = glyphViewbox
         };
         _sizeLockButton.SetResourceReference(FrameworkElement.StyleProperty, "PillButton");
@@ -148,7 +148,7 @@ public partial class CaptionResizePillWindow
 
         if (!wasLocked && !nowLocked && _sizeLockButton is not null)
         {
-            _sizeLockButton.ToolTip = "Restore this window from minimized/maximized state before locking its size.";
+            _sizeLockButton.ToolTip = "Restore this window from minimized/maximized state before locking it.";
         }
     }
 
@@ -188,10 +188,10 @@ public partial class CaptionResizePillWindow
         _sizeLockGlyph.Data = locked ? LockedGeometry : UnlockedGeometry;
 
         _sizeLockButton.ToolTip = _targetHwnd == IntPtr.Zero
-            ? "Window size lock · Point at a window first"
+            ? "Window lock · Point at a window first"
             : locked
-                ? "Window size lock · Locked · Move allowed, resize disabled"
-                : "Window size lock · Unlocked";
+                ? "Window lock · Locked · Position and size fixed"
+                : "Window lock · Unlocked";
     }
 
     private bool IsSizeLockedForCurrentTarget()

@@ -1,9 +1,9 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
-using System.Windows.Shapes;
 using System.Windows.Threading;
 using MUX.App.Services;
+using ShapePath = System.Windows.Shapes.Path;
 
 namespace MUX.App.Windows;
 
@@ -11,7 +11,7 @@ public partial class CaptionResizePillWindow
 {
     private WindowSizeLockService? _sizeLockService;
     private Button? _sizeLockButton;
-    private Path? _sizeLockGlyph;
+    private ShapePath? _sizeLockGlyph;
     private DispatcherTimer? _sizeLockVisualTimer;
     private IntPtr _lastSizeLockVisualTarget;
 
@@ -80,6 +80,11 @@ public partial class CaptionResizePillWindow
         MagnetButton.Width = 14;
         MagnetButton.Padding = new Thickness(0);
         Grid.SetColumn(MagnetButton, 2);
+        if (MagnetButton.Content is Viewbox magnetViewbox)
+        {
+            magnetViewbox.Width = 12;
+            magnetViewbox.Height = 12;
+        }
 
         if (_edgeCoverButton is not null)
         {
@@ -88,7 +93,7 @@ public partial class CaptionResizePillWindow
             Grid.SetColumn(_edgeCoverButton, 4);
         }
 
-        _sizeLockGlyph = new Path
+        _sizeLockGlyph = new ShapePath
         {
             Width = 12,
             Height = 12,

@@ -47,7 +47,7 @@ public partial class MainWindow
         if (_hotkeys is not null)
         {
             _hotkeys.Register(5, System.Windows.Input.Key.F, ToggleMuxFullscreen);
-            _hotkeys.Register(6, System.Windows.Input.Key.B, ToggleAllBlackBars);
+            _hotkeys.Register(6, System.Windows.Input.Key.B, () => ToggleAllBlackBars());
             _hotkeys.Reload(_state.Shortcuts, out _);
         }
 

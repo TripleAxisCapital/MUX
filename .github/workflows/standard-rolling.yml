@@ -28,10 +28,16 @@ jobs:
       - name: Publish MUX Standard
         run: dotnet publish src/MUX.App/MUX.App.csproj -c Release -r win-x64 --self-contained true -o artifacts/MUX
 
-      - name: Launch smoke test
+      - name: Launch and command bridge smoke test
         shell: pwsh
         run: |
           $exe = Join-Path $PWD "artifacts/MUX/MUX.exe"
+          $launcher = Join-Path $PWD "artifacts/MUX/MUX-AutoArrange.exe"
+
+          if (-not (Test-Path $launcher)) {
+            throw "MUX-AutoArrange.exe was not included in the published Standard build."
+          }
+
           $process = Start-Process -FilePath $exe -ArgumentList "--background" -PassThru
           Start-Sleep -Seconds 5
           $process.Refresh()
@@ -46,8 +52,39 @@ jobs:
             throw "MUX Standard exited during the startup smoke test with exit code $($process.ExitCode)."
           }
 
+          # The dedicated Stream Deck launcher must hand its command to the existing MUX process,
+          # exit quickly, and leave that resident process alive.
+          $launcherProcess = Start-Process -FilePath $launcher -PassThru
+          if (-not $launcherProcess.WaitForExit(5000)) {
+            Stop-Process -Id $launcherProcess.Id -Force -ErrorAction SilentlyContinue
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            throw "MUX-AutoArrange.exe did not return after handing off its command."
+          }
+          if ($launcherProcess.ExitCode -ne 0) {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            throw "MUX-AutoArrange.exe exited with code $($launcherProcess.ExitCode)."
+          }
+
+          # The explicit CLI form must use the same bridge rather than retiring/replacing the
+          # already-running Standard instance.
+          $cliProcess = Start-Process -FilePath $exe -ArgumentList "--auto-arrange" -PassThru
+          if (-not $cliProcess.WaitForExit(5000)) {
+            Stop-Process -Id $cliProcess.Id -Force -ErrorAction SilentlyContinue
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            throw "MUX.exe --auto-arrange did not return after handing off its command."
+          }
+          if ($cliProcess.ExitCode -ne 0) {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            throw "MUX.exe --auto-arrange exited with code $($cliProcess.ExitCode)."
+          }
+
+          $process.Refresh()
+          if ($process.HasExited) {
+            throw "The resident MUX process was replaced or terminated by an Auto Arrange command."
+          }
+
           Stop-Process -Id $process.Id -Force
-          Write-Host "MUX Standard remained alive through the startup smoke test."
+          Write-Host "MUX Standard, MUX-AutoArrange.exe, and MUX.exe --auto-arrange passed the smoke test."
 
       - name: Package Standard
         shell: pwsh

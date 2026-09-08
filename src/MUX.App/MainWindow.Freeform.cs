@@ -7,7 +7,7 @@ namespace MUX.App;
 
 public partial class MainWindow
 {
-    private CaptionResizePillService? _captionResizePillService;
+    private DisplayFilteredCaptionPillController? _captionPillController;
     private CheckBox? _predefinedAreasCheck;
     private StackPanel? _captionPillDisplayPanel;
     private bool _freeformControlsInitialized;
@@ -32,12 +32,10 @@ public partial class MainWindow
         Loaded += MainWindow_FreeformLoaded;
         Closed += MainWindow_FreeformClosed;
 
-        _captionResizePillService = new CaptionResizePillService(
-            () => new DisplaySizingSnapshot(
-                _state.Displays,
-                _state.ActiveDisplayDeviceName,
-                _state.CaptionPillDisabledDisplayDeviceNames));
-        _captionResizePillService.Start();
+        _captionPillController = new DisplayFilteredCaptionPillController(
+            () => new DisplaySizingSnapshot(_state.Displays, _state.ActiveDisplayDeviceName),
+            () => _state.CaptionPillDisabledDisplayDeviceNames ?? Array.Empty<string>());
+        _captionPillController.Start();
     }
 
     public async Task SetPredefinedAreasEnabledAsync(bool enabled)
@@ -179,8 +177,8 @@ public partial class MainWindow
 
     private void MainWindow_FreeformClosed(object? sender, EventArgs e)
     {
-        _captionResizePillService?.Dispose();
-        _captionResizePillService = null;
+        _captionPillController?.Dispose();
+        _captionPillController = null;
     }
 
     private void EngineToggleButton_FreeformStateChanged(object sender, RoutedEventArgs e)

@@ -9,7 +9,7 @@ namespace MUX.App.Windows;
 
 public partial class CaptionResizePillWindow
 {
-    private ProximityEdgeCoverService? _edgeCoverService;
+    private EnhancedEdgeCoverService? _edgeCoverService;
     private Button? _edgeCoverButton;
     private Rectangle? _edgeCoverGlyph;
     private DispatcherTimer? _edgeCoverVisualTimer;
@@ -21,7 +21,7 @@ public partial class CaptionResizePillWindow
         {
             try
             {
-                _edgeCoverService = new ProximityEdgeCoverService();
+                _edgeCoverService = new EnhancedEdgeCoverService();
                 _edgeCoverService.Changed += EdgeCoverService_Changed;
             }
             catch
@@ -195,7 +195,7 @@ public partial class CaptionResizePillWindow
         _edgeCoverButton.ToolTip = _targetHwnd == IntPtr.Zero
             ? "Window edge covers · Point at a window first"
             : active
-                ? "Window edge covers · On · Click-drag anywhere near a black edge"
+                ? "Window edge covers · On · Grab from either side when you are near a black edge"
                 : "Window edge covers · Off for this window";
     }
 

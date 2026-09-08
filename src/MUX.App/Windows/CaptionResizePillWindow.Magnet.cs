@@ -27,6 +27,7 @@ public partial class CaptionResizePillWindow
         InitializeEdgeCoverControls();
         InitializeSizeLockControls();
         InitializeWindowLinkControls();
+        InitializeAutoArrangeControls();
         if (_windowLinkService is not null)
         {
             _windowLinkService.GroupSnappingEnabled = _magneticSnappingEnabled;
@@ -35,6 +36,7 @@ public partial class CaptionResizePillWindow
 
     private void MagnetWindow_Closed(object? sender, EventArgs e)
     {
+        DisposeAutoArrangeControls();
         DisposeWindowLinkControls();
         DisposeSizeLockControls();
         DisposeEdgeCoverControls();

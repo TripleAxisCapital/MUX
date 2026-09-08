@@ -12,7 +12,9 @@
         Opacity="0"
         FontFamily="Segoe UI Variable Text, Segoe UI"
         UseLayoutRounding="True"
-        SnapsToDevicePixels="True">
+        SnapsToDevicePixels="True"
+        Loaded="MagnetWindow_Loaded"
+        Closed="MagnetWindow_Closed">
     <Window.Resources>
         <Style TargetType="{x:Type ToolTip}">
             <Setter Property="Foreground" Value="#F5F5F7" />
@@ -186,23 +188,46 @@
                         ToolTip="Aspect ratio"
                         Click="RatioButton_Click" />
 
-                <Border Grid.Column="6"
-                        Height="34"
-                        Background="#111114"
-                        BorderBrush="#2E2E33"
-                        BorderThickness="1"
-                        CornerRadius="11"
-                        Padding="10,0"
-                        Cursor="Hand"
-                        MouseLeftButtonUp="CurrentSize_MouseLeftButtonUp">
-                    <TextBlock x:Name="CurrentSizeText"
-                               Text="— in"
-                               Foreground="#D0D0D6"
-                               FontWeight="SemiBold"
-                               FontSize="11"
-                               VerticalAlignment="Center"
-                               HorizontalAlignment="Center" />
-                </Border>
+                <Grid Grid.Column="6">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="48" />
+                        <ColumnDefinition Width="4" />
+                        <ColumnDefinition Width="26" />
+                    </Grid.ColumnDefinitions>
+
+                    <Border Grid.Column="0"
+                            Height="34"
+                            Background="#111114"
+                            BorderBrush="#2E2E33"
+                            BorderThickness="1"
+                            CornerRadius="11"
+                            Padding="5,0"
+                            Cursor="Hand"
+                            MouseLeftButtonUp="CurrentSize_MouseLeftButtonUp">
+                        <TextBlock x:Name="CurrentSizeText"
+                                   Text="— in"
+                                   Foreground="#D0D0D6"
+                                   FontWeight="SemiBold"
+                                   FontSize="10.5"
+                                   VerticalAlignment="Center"
+                                   HorizontalAlignment="Center" />
+                    </Border>
+
+                    <Button x:Name="MagnetButton"
+                            Grid.Column="2"
+                            Width="26"
+                            Height="34"
+                            Style="{StaticResource PillButton}"
+                            Padding="4"
+                            ToolTip="Magnetic window snapping"
+                            Click="MagnetButton_Click">
+                        <Viewbox Width="15" Height="15" Stretch="Uniform">
+                            <Path x:Name="MagnetGlyph"
+                                  Fill="#F5F5F7"
+                                  Data="M2,1 H6 V8 C6,9.7 7.3,11 9,11 C10.7,11 12,9.7 12,8 V1 H16 V8 C16,11.9 12.9,15 9,15 C5.1,15 2,11.9 2,8 Z" />
+                        </Viewbox>
+                    </Button>
+                </Grid>
             </Grid>
 
             <ScrollViewer x:Name="ExpandedScroll"

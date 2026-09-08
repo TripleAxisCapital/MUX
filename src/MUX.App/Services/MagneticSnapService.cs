@@ -239,7 +239,9 @@ public sealed class MagneticSnapService : IDisposable
             _lockedVisualLeft = null;
         }
 
-        var threshold = finalPass ? Math.Max(_snapThresholdPx, ScaleForDpi(18, GetDpiForWindow(_movingHwnd))) : _snapThresholdPx;
+        var threshold = finalPass
+            ? Math.Max(_snapThresholdPx, ScaleForDpi(18, GetDpiForWindow(_movingHwnd)))
+            : _snapThresholdPx;
         var bestDistance = threshold + 1;
         int? bestLeft = null;
 
@@ -293,7 +295,9 @@ public sealed class MagneticSnapService : IDisposable
             _lockedVisualTop = null;
         }
 
-        var threshold = finalPass ? Math.Max(_snapThresholdPx, ScaleForDpi(18, GetDpiForWindow(_movingHwnd))) : _snapThresholdPx;
+        var threshold = finalPass
+            ? Math.Max(_snapThresholdPx, ScaleForDpi(18, GetDpiForWindow(_movingHwnd)))
+            : _snapThresholdPx;
         var bestDistance = threshold + 1;
         int? bestTop = null;
 
@@ -343,14 +347,17 @@ public sealed class MagneticSnapService : IDisposable
     {
         _candidateVisualRects.Clear();
 
-        EnumWindows((hwnd, _) =>
+        EnumWindows((hwnd, lParam) =>
         {
             if (hwnd == movingHwnd || !IsEligibleWindow(hwnd))
             {
                 return true;
             }
 
-            if (TryGetWindowGeometry(hwnd, out _, out var visual) && visual.Width >= 80 && visual.Height >= 60)
+            if (TryGetWindowGeometry(hwnd, out var candidateRaw, out var visual) &&
+                candidateRaw.Width > 0 &&
+                visual.Width >= 80 &&
+                visual.Height >= 60)
             {
                 _candidateVisualRects.Add(visual);
             }

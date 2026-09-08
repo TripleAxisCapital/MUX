@@ -135,6 +135,7 @@ public sealed class CaptionResizePillService : IDisposable
             _targetClusterWidth = clusterWidth;
             _targetCaptionHeight = captionHeight;
             _lastHotUtc = now;
+            _pill.SetAvailableWidth(visualBounds.Width, dpi);
 
             if (GetWindowRect(hwnd, out var rawBounds))
             {
@@ -234,6 +235,8 @@ public sealed class CaptionResizePillService : IDisposable
         {
             _targetDpi = 96;
         }
+
+        _pill.SetAvailableWidth(_targetVisualBounds.Width, _targetDpi);
 
         var style = GetWindowStyle(_targetHwnd);
         var buttonWidth = Math.Max(ScaleForDpi(44, _targetDpi), GetSystemMetricsForDpi(SmCxSize, _targetDpi));
@@ -413,18 +416,21 @@ public sealed class CaptionResizePillService : IDisposable
 
         var gap = ScaleForDpi(8, dpi);
         var edgePadding = ScaleForDpi(6, dpi);
-        var clusterCenterX = targetBounds.Right - Math.Max(clusterWidth, 1) / 2;
-        var left = clusterCenterX - pillBounds.Width / 2;
-        var top = targetBounds.Top - pillBounds.Height - gap;
+        var targetRight = Math.Min(targetBounds.Right - edgePadding, monitorInfo.Work.Right - edgePadding);
+        var targetLeft = Math.Max(targetBounds.Left + edgePadding, monitorInfo.Work.Left + edgePadding);
+        var left = targetRight - pillBounds.Width;
+        if (left < targetLeft)
+        {
+            left = targetLeft;
+        }
 
+        var top = targetBounds.Top - pillBounds.Height - gap;
         if (top < monitorInfo.Work.Top + edgePadding)
         {
             top = targetBounds.Top + captionHeight + gap;
         }
 
-        var maxLeft = monitorInfo.Work.Right - pillBounds.Width - edgePadding;
         var maxTop = monitorInfo.Work.Bottom - pillBounds.Height - edgePadding;
-        left = Math.Clamp(left, monitorInfo.Work.Left + edgePadding, Math.Max(monitorInfo.Work.Left + edgePadding, maxLeft));
         top = Math.Clamp(top, monitorInfo.Work.Top + edgePadding, Math.Max(monitorInfo.Work.Top + edgePadding, maxTop));
 
         SetWindowPos(
@@ -461,17 +467,21 @@ public sealed class CaptionResizePillService : IDisposable
         PixelSize target;
         try
         {
-            target = DisplayGeometry.PixelsFromPhysicalDiagonal(display, e.DiagonalInches, current.Width, current.Height);
+            target = DisplayGeometry.PixelsFromPhysicalDiagonal(
+                display,
+                e.DiagonalInches,
+                e.AspectWidth,
+                e.AspectHeight);
         }
         catch
         {
-            e.ErrorMessage = "The physical display sizing settings are invalid. Check the display diagonal and calibration in MUX.";
+            e.ErrorMessage = "The physical display sizing or aspect-ratio settings are invalid. Check the display diagonal, calibration, and ratio in MUX.";
             return;
         }
 
         if (target.Width is < 120 or > 32767 || target.Height is < 80 or > 32767)
         {
-            e.ErrorMessage = "That diagonal would make this window too small or too large for Windows.";
+            e.ErrorMessage = "That diagonal and aspect ratio would make this window too small or too large for Windows.";
             return;
         }
 
@@ -500,6 +510,7 @@ public sealed class CaptionResizePillService : IDisposable
 
         _pill.UpdateTargetDimensions(actual.Width, actual.Height, e.ActualDiagonalInches, e.DisplayName);
         TryGetVisualBounds(e.TargetHwnd, out _targetVisualBounds);
+        _pill.SetAvailableWidth(_targetVisualBounds.Width, _targetDpi);
         SetForegroundWindow(e.TargetHwnd);
         RepositionCurrentPill();
     }

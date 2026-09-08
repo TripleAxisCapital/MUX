@@ -58,18 +58,27 @@ public static class DisplayGeometry
 
     public static PixelSize PixelsFromPhysicalDiagonal(DisplayProfile display, double diagonalInches, int aspectWidthPx, int aspectHeightPx)
     {
-        ArgumentNullException.ThrowIfNull(display);
-        ValidatePositive(diagonalInches, nameof(diagonalInches));
         if (aspectWidthPx <= 0) throw new ArgumentOutOfRangeException(nameof(aspectWidthPx));
         if (aspectHeightPx <= 0) throw new ArgumentOutOfRangeException(nameof(aspectHeightPx));
+        return PixelsFromPhysicalDiagonal(display, diagonalInches, (double)aspectWidthPx, aspectHeightPx);
+    }
 
-        var currentDiagonalPixels = Math.Sqrt((double)aspectWidthPx * aspectWidthPx + (double)aspectHeightPx * aspectHeightPx);
-        var targetDiagonalPixels = diagonalInches * PixelsPerInch(display);
-        var scale = targetDiagonalPixels / currentDiagonalPixels;
+    public static PixelSize PixelsFromPhysicalDiagonal(
+        DisplayProfile display,
+        double diagonalInches,
+        double aspectWidth,
+        double aspectHeight)
+    {
+        ArgumentNullException.ThrowIfNull(display);
+        ValidatePositive(diagonalInches, nameof(diagonalInches));
+        ValidatePositive(aspectWidth, nameof(aspectWidth));
+        ValidatePositive(aspectHeight, nameof(aspectHeight));
 
+        var physicalSize = PhysicalSizeFromDiagonal(diagonalInches, aspectWidth, aspectHeight);
+        var ppi = PixelsPerInch(display);
         return new PixelSize(
-            Math.Max(1, (int)Math.Round(aspectWidthPx * scale)),
-            Math.Max(1, (int)Math.Round(aspectHeightPx * scale)));
+            Math.Max(1, (int)Math.Round(physicalSize.Width * ppi)),
+            Math.Max(1, (int)Math.Round(physicalSize.Height * ppi)));
     }
 
     public static PixelRect ZoneToPixels(DisplayProfile display, VirtualMonitorZone zone, bool includeDisplayOffset = true)

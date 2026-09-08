@@ -36,11 +36,27 @@ Run("freeform diagonal uses calibrated display scale", () =>
     Near(measured, 25, 0.03, "physical diagonal");
 });
 
-Run("freeform diagonal preserves window aspect ratio", () =>
+Run("freeform diagonal preserves supplied window aspect ratio", () =>
 {
     var display = new DisplayProfile { WidthPx = 3840, HeightPx = 2160, DiagonalInches = 100, CalibrationScale = 1 };
     var pixels = DisplayGeometry.PixelsFromPhysicalDiagonal(display, 25, 1400, 900);
     Near((double)pixels.Width / pixels.Height, 1400d / 900d, 0.002, "aspect ratio");
+});
+
+Run("freeform diagonal can force 16:9", () =>
+{
+    var display = new DisplayProfile { WidthPx = 3840, HeightPx = 2160, DiagonalInches = 100, CalibrationScale = 1 };
+    var pixels = DisplayGeometry.PixelsFromPhysicalDiagonal(display, 25, 16d, 9d);
+    Near((double)pixels.Width / pixels.Height, 16d / 9d, 0.002, "16:9 aspect ratio");
+    Near(DisplayGeometry.PhysicalDiagonalFromPixels(display, pixels.Width, pixels.Height), 25, 0.03, "16:9 diagonal");
+});
+
+Run("freeform diagonal can force 9:16", () =>
+{
+    var display = new DisplayProfile { WidthPx = 3840, HeightPx = 2160, DiagonalInches = 100, CalibrationScale = 1 };
+    var pixels = DisplayGeometry.PixelsFromPhysicalDiagonal(display, 25, 9d, 16d);
+    Near((double)pixels.Width / pixels.Height, 9d / 16d, 0.002, "9:16 aspect ratio");
+    Near(DisplayGeometry.PhysicalDiagonalFromPixels(display, pixels.Width, pixels.Height), 25, 0.03, "9:16 diagonal");
 });
 
 Run("zones clamp inside physical display", () =>
@@ -105,7 +121,7 @@ if (failures.Count > 0)
     return 1;
 }
 
-Console.WriteLine("MUX.Core validation passed: 8/8 checks.");
+Console.WriteLine("MUX.Core validation passed: 10/10 checks.");
 return 0;
 
 void Run(string name, Action test)

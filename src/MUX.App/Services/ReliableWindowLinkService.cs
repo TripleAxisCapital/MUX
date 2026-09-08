@@ -6,12 +6,19 @@ using System.Windows.Threading;
 namespace MUX.App.Services;
 
 /// <summary>
-/// Rigidly links two nearby edge-attached top-level windows. The partner detector deliberately
-/// uses the same visible DWM geometry a user sees, with enough DPI-aware tolerance to survive
-/// invisible resize borders and the small residual gaps Windows can report after snapping.
+/// Links two edge-attached top-level windows as a rigid visual assembly.
+///
+/// The attachment is stored as a real edge constraint (right-to-left, left-to-right,
+/// bottom-to-top, or top-to-bottom) plus the exact offset along the shared edge. During an
+/// interactive drag/resize, the window the user grabbed is the authoritative leader and the
+/// partner is solved to an absolute visual position from that constraint. This deliberately does
+/// not accumulate deltas from the follower's current position, so DWM, DPI and magnetic-snap
+/// corrections cannot introduce sideways drift over time.
 /// </summary>
 public sealed class ReliableWindowLinkService : IDisposable
 {
+    private const uint EventSystemMoveSizeStart = 0x000A;
+    private const uint EventSystemMoveSizeEnd = 0x000B;
     private const uint EventObjectDestroy = 0x8001;
     private const uint EventObjectLocationChange = 0x800B;
     private const uint WineventOutOfContext = 0x0000;
@@ -24,6 +31,10 @@ public sealed class ReliableWindowLinkService : IDisposable
     private const uint SwpNoZOrder = 0x0004;
     private const uint SwpNoActivate = 0x0010;
     private const uint SwpNoOwnerZOrder = 0x0200;
+    private const int VerificationPasses = 4;
+
+    private static readonly TimeSpan PostDragStabilization = TimeSpan.FromMilliseconds(320);
+    private static readonly TimeSpan SyntheticMoveSuppression = TimeSpan.FromMilliseconds(220);
 
     private readonly Dictionary<IntPtr, LinkedPair> _byWindow = new();
     private readonly List<IntPtr> _hooks = new();
@@ -35,6 +46,7 @@ public sealed class ReliableWindowLinkService : IDisposable
     {
         _eventDelegate = OnWinEvent;
         _dispatcher = Application.Current?.Dispatcher ?? Dispatcher.CurrentDispatcher;
+        AddHook(EventSystemMoveSizeStart, EventSystemMoveSizeEnd);
         AddHook(EventObjectDestroy, EventObjectDestroy);
         AddHook(EventObjectLocationChange, EventObjectLocationChange);
     }
@@ -58,7 +70,7 @@ public sealed class ReliableWindowLinkService : IDisposable
             return linked.Other(hwnd);
         }
 
-        return FindAttachablePartnerCore(hwnd);
+        return FindAttachablePartnerCore(hwnd)?.Hwnd ?? IntPtr.Zero;
     }
 
     public bool ToggleLink(IntPtr hwnd)
@@ -75,23 +87,38 @@ public sealed class ReliableWindowLinkService : IDisposable
             return false;
         }
 
-        var partner = FindAttachablePartnerCore(hwnd);
-        if (partner == IntPtr.Zero || _byWindow.ContainsKey(partner))
+        var candidate = FindAttachablePartnerCore(hwnd);
+        if (candidate is null || _byWindow.ContainsKey(candidate.Value.Hwnd))
         {
             return false;
         }
 
-        if (!GetWindowRect(hwnd, out var first) ||
-            !GetWindowRect(partner, out var second) ||
-            first.Width <= 0 || first.Height <= 0 ||
-            second.Width <= 0 || second.Height <= 0)
+        var partner = candidate.Value.Hwnd;
+        if (!TryGetWindowGeometry(hwnd, out var firstRaw, out var firstVisual) ||
+            !TryGetWindowGeometry(partner, out var secondRaw, out var secondVisual) ||
+            firstRaw.Width <= 0 || firstRaw.Height <= 0 ||
+            secondRaw.Width <= 0 || secondRaw.Height <= 0)
         {
             return false;
         }
 
-        var pair = new LinkedPair(hwnd, partner, first, second);
+        var alongOffset = candidate.Value.Attachment is AttachmentEdge.ARightToBLeft or AttachmentEdge.ALeftToBRight
+            ? secondVisual.Top - firstVisual.Top
+            : secondVisual.Left - firstVisual.Left;
+
+        var pair = new LinkedPair(
+            hwnd,
+            partner,
+            candidate.Value.Attachment,
+            alongOffset,
+            firstRaw,
+            secondRaw);
+
         _byWindow[hwnd] = pair;
         _byWindow[partner] = pair;
+
+        EnforceRelationship(pair, hwnd, finalPass: true);
+        pair.BeginStabilization(hwnd, PostDragStabilization);
         RaiseChanged();
         return true;
     }
@@ -114,7 +141,12 @@ public sealed class ReliableWindowLinkService : IDisposable
         uint eventThread,
         uint eventTime)
     {
-        if (_disposed || hwnd == IntPtr.Zero || idObject != ObjidWindow)
+        if (_disposed || hwnd == IntPtr.Zero)
+        {
+            return;
+        }
+
+        if ((eventType == EventObjectDestroy || eventType == EventObjectLocationChange) && idObject != ObjidWindow)
         {
             return;
         }
@@ -127,7 +159,6 @@ public sealed class ReliableWindowLinkService : IDisposable
         }
         catch
         {
-            // Dispatcher can be shutting down.
         }
     }
 
@@ -148,81 +179,147 @@ public sealed class ReliableWindowLinkService : IDisposable
             return;
         }
 
-        if (eventType != EventObjectLocationChange || !_byWindow.TryGetValue(hwnd, out var pair))
+        if (!_byWindow.TryGetValue(hwnd, out var pair))
         {
             return;
         }
 
-        PropagateMovement(pair, hwnd);
+        if (eventType == EventSystemMoveSizeStart)
+        {
+            BeginInteractiveMove(pair, hwnd);
+            return;
+        }
+
+        if (eventType == EventSystemMoveSizeEnd)
+        {
+            EndInteractiveMove(pair, hwnd);
+            return;
+        }
+
+        if (eventType == EventObjectLocationChange)
+        {
+            HandleLocationChange(pair, hwnd);
+        }
     }
 
-    private void PropagateMovement(LinkedPair pair, IntPtr sourceHwnd)
+    private void BeginInteractiveMove(LinkedPair pair, IntPtr hwnd)
     {
-        if (pair.Applying || !_byWindow.ContainsKey(sourceHwnd))
+        if (!IsWindow(hwnd))
         {
             return;
         }
 
-        var partnerHwnd = pair.Other(sourceHwnd);
-        if (partnerHwnd == IntPtr.Zero || !IsWindow(sourceHwnd) || !IsWindow(partnerHwnd))
+        pair.ActiveLeader = hwnd;
+        pair.BeginStabilization(hwnd, TimeSpan.FromDays(1));
+        EnforceRelationship(pair, hwnd, finalPass: true);
+    }
+
+    private void EndInteractiveMove(LinkedPair pair, IntPtr hwnd)
+    {
+        if (pair.ActiveLeader != IntPtr.Zero && pair.ActiveLeader != hwnd)
+        {
+            return;
+        }
+
+        var leader = pair.ActiveLeader != IntPtr.Zero ? pair.ActiveLeader : hwnd;
+        EnforceRelationship(pair, leader, finalPass: true);
+        pair.ActiveLeader = IntPtr.Zero;
+        pair.BeginStabilization(leader, PostDragStabilization);
+
+        try
+        {
+            _dispatcher.BeginInvoke(
+                DispatcherPriority.ContextIdle,
+                new Action(() =>
+                {
+                    if (_disposed || !_byWindow.TryGetValue(leader, out var current) || !ReferenceEquals(current, pair))
+                    {
+                        return;
+                    }
+
+                    EnforceRelationship(pair, leader, finalPass: true);
+                }));
+        }
+        catch
+        {
+        }
+    }
+
+    private void HandleLocationChange(LinkedPair pair, IntPtr changedHwnd)
+    {
+        if (pair.Applying)
+        {
+            return;
+        }
+
+        if (!IsWindow(pair.A) || !IsWindow(pair.B))
         {
             RemovePair(pair);
             RaiseChanged();
             return;
         }
 
-        if (!GetWindowRect(sourceHwnd, out var sourceCurrent) ||
-            !GetWindowRect(partnerHwnd, out var partnerCurrent))
+        if (pair.ActiveLeader != IntPtr.Zero)
+        {
+            if (changedHwnd == pair.ActiveLeader)
+            {
+                EnforceRelationship(pair, pair.ActiveLeader, finalPass: false);
+            }
+            return;
+        }
+
+        if (pair.TryGetStabilizationLeader(out var stabilizingLeader))
+        {
+            if (changedHwnd == stabilizingLeader || !pair.IsSyntheticSuppressed(changedHwnd))
+            {
+                EnforceRelationship(pair, stabilizingLeader, finalPass: false);
+            }
+            return;
+        }
+
+        if (pair.IsSyntheticSuppressed(changedHwnd))
         {
             return;
         }
 
-        var sourcePrevious = pair.GetLast(sourceHwnd);
+        EnforceRelationship(pair, changedHwnd, finalPass: true);
+        pair.BeginStabilization(changedHwnd, PostDragStabilization);
+    }
 
-        // A resize updates the baseline without resizing the partner. Linking is positional only.
-        if (sourceCurrent.Width != sourcePrevious.Width || sourceCurrent.Height != sourcePrevious.Height)
+    private void EnforceRelationship(LinkedPair pair, IntPtr leaderHwnd, bool finalPass)
+    {
+        if (pair.Applying || leaderHwnd == IntPtr.Zero)
         {
-            pair.SetLast(sourceHwnd, sourceCurrent);
-            pair.SetLast(partnerHwnd, partnerCurrent);
             return;
         }
 
-        var deltaX = sourceCurrent.Left - sourcePrevious.Left;
-        var deltaY = sourceCurrent.Top - sourcePrevious.Top;
-        if (deltaX == 0 && deltaY == 0)
+        var followerHwnd = pair.Other(leaderHwnd);
+        if (followerHwnd == IntPtr.Zero || !IsWindow(leaderHwnd) || !IsWindow(followerHwnd))
         {
-            pair.SetLast(sourceHwnd, sourceCurrent);
-            pair.SetLast(partnerHwnd, partnerCurrent);
             return;
         }
+
+        if (!TryGetWindowGeometry(leaderHwnd, out _, out var leaderVisual) ||
+            !TryGetWindowGeometry(followerHwnd, out var followerRaw, out var followerVisual))
+        {
+            return;
+        }
+
+        var desired = DesiredFollowerVisualOrigin(pair, leaderHwnd, leaderVisual, followerVisual);
 
         pair.Applying = true;
         try
         {
-            SetWindowPos(
-                partnerHwnd,
-                IntPtr.Zero,
-                partnerCurrent.Left + deltaX,
-                partnerCurrent.Top + deltaY,
-                0,
-                0,
-                SwpNoSize | SwpNoZOrder | SwpNoActivate | SwpNoOwnerZOrder);
+            MoveWindowToVisualOrigin(followerHwnd, followerRaw, followerVisual, desired.Left, desired.Top);
+            pair.SuppressSynthetic(followerHwnd, SyntheticMoveSuppression);
 
-            pair.SetLast(sourceHwnd, sourceCurrent);
-            if (GetWindowRect(partnerHwnd, out var appliedPartner))
+            if (finalPass)
             {
-                pair.SetLast(partnerHwnd, appliedPartner);
+                VerifyRigidAttachment(pair, leaderHwnd, followerHwnd);
             }
-            else
-            {
-                pair.SetLast(
-                    partnerHwnd,
-                    new NativeRect(
-                        partnerCurrent.Left + deltaX,
-                        partnerCurrent.Top + deltaY,
-                        partnerCurrent.Right + deltaX,
-                        partnerCurrent.Bottom + deltaY));
-            }
+
+            if (GetWindowRect(pair.A, out var currentA)) pair.LastA = currentA;
+            if (GetWindowRect(pair.B, out var currentB)) pair.LastB = currentB;
         }
         finally
         {
@@ -230,78 +327,163 @@ public sealed class ReliableWindowLinkService : IDisposable
         }
     }
 
-    private IntPtr FindAttachablePartnerCore(IntPtr hwnd)
+    private void VerifyRigidAttachment(LinkedPair pair, IntPtr leaderHwnd, IntPtr followerHwnd)
+    {
+        for (var pass = 0; pass < VerificationPasses; pass++)
+        {
+            if (!TryGetWindowGeometry(leaderHwnd, out _, out var leaderVisual) ||
+                !TryGetWindowGeometry(followerHwnd, out var followerRaw, out var followerVisual))
+            {
+                return;
+            }
+
+            var desired = DesiredFollowerVisualOrigin(pair, leaderHwnd, leaderVisual, followerVisual);
+            if (desired.Left == followerVisual.Left && desired.Top == followerVisual.Top)
+            {
+                return;
+            }
+
+            MoveWindowToVisualOrigin(followerHwnd, followerRaw, followerVisual, desired.Left, desired.Top);
+            pair.SuppressSynthetic(followerHwnd, SyntheticMoveSuppression);
+        }
+    }
+
+    private static VisualPoint DesiredFollowerVisualOrigin(
+        LinkedPair pair,
+        IntPtr leaderHwnd,
+        NativeRect leaderVisual,
+        NativeRect followerVisual)
+    {
+        if (leaderHwnd == pair.A)
+        {
+            return pair.Attachment switch
+            {
+                AttachmentEdge.ARightToBLeft => new VisualPoint(leaderVisual.Right, leaderVisual.Top + pair.AlongOffset),
+                AttachmentEdge.ALeftToBRight => new VisualPoint(leaderVisual.Left - followerVisual.Width, leaderVisual.Top + pair.AlongOffset),
+                AttachmentEdge.ABottomToBTop => new VisualPoint(leaderVisual.Left + pair.AlongOffset, leaderVisual.Bottom),
+                AttachmentEdge.ATopToBBottom => new VisualPoint(leaderVisual.Left + pair.AlongOffset, leaderVisual.Top - followerVisual.Height),
+                _ => new VisualPoint(followerVisual.Left, followerVisual.Top)
+            };
+        }
+
+        return pair.Attachment switch
+        {
+            AttachmentEdge.ARightToBLeft => new VisualPoint(leaderVisual.Left - followerVisual.Width, leaderVisual.Top - pair.AlongOffset),
+            AttachmentEdge.ALeftToBRight => new VisualPoint(leaderVisual.Right, leaderVisual.Top - pair.AlongOffset),
+            AttachmentEdge.ABottomToBTop => new VisualPoint(leaderVisual.Left - pair.AlongOffset, leaderVisual.Top - followerVisual.Height),
+            AttachmentEdge.ATopToBBottom => new VisualPoint(leaderVisual.Left - pair.AlongOffset, leaderVisual.Bottom),
+            _ => new VisualPoint(followerVisual.Left, followerVisual.Top)
+        };
+    }
+
+    private static void MoveWindowToVisualOrigin(
+        IntPtr hwnd,
+        NativeRect raw,
+        NativeRect visual,
+        int desiredVisualLeft,
+        int desiredVisualTop)
+    {
+        var deltaX = desiredVisualLeft - visual.Left;
+        var deltaY = desiredVisualTop - visual.Top;
+        if (deltaX == 0 && deltaY == 0)
+        {
+            return;
+        }
+
+        SetWindowPos(
+            hwnd,
+            IntPtr.Zero,
+            raw.Left + deltaX,
+            raw.Top + deltaY,
+            0,
+            0,
+            SwpNoSize | SwpNoZOrder | SwpNoActivate | SwpNoOwnerZOrder);
+    }
+
+    private AttachmentCandidate? FindAttachablePartnerCore(IntPtr hwnd)
     {
         if (!IsEligibleWindow(hwnd) || !TryGetVisualRect(hwnd, out var source))
         {
-            return IntPtr.Zero;
+            return null;
         }
 
         var dpi = EffectiveDpi(hwnd);
-        // Magnetic snapping itself uses a 14px acquisition range. Give linkage a little more room
-        // so DWM/invisible-border discrepancies cannot make the control randomly unavailable.
         var edgeTolerance = ScaleForDpi(22, dpi);
         var minimumOverlap = ScaleForDpi(28, dpi);
-
-        IntPtr bestHwnd = IntPtr.Zero;
-        long bestScore = long.MinValue;
+        AttachmentCandidate? best = null;
 
         EnumWindows((candidateHwnd, _) =>
         {
             if (candidateHwnd == hwnd ||
                 _byWindow.ContainsKey(candidateHwnd) ||
                 !IsEligibleWindow(candidateHwnd) ||
-                !TryGetVisualRect(candidateHwnd, out var candidate))
+                !TryGetVisualRect(candidateHwnd, out var candidateVisual))
             {
                 return true;
             }
 
-            var score = AttachmentScore(source, candidate, edgeTolerance, minimumOverlap);
-            if (score > bestScore)
+            if (!TryBestAttachment(source, candidateVisual, edgeTolerance, minimumOverlap, out var attachment, out var score))
             {
-                bestScore = score;
-                bestHwnd = candidateHwnd;
+                return true;
+            }
+
+            if (best is null || score > best.Value.Score)
+            {
+                best = new AttachmentCandidate(candidateHwnd, attachment, score);
             }
 
             return true;
         }, IntPtr.Zero);
 
-        return bestScore == long.MinValue ? IntPtr.Zero : bestHwnd;
+        return best;
     }
 
-    private static long AttachmentScore(NativeRect a, NativeRect b, int tolerance, int minimumOverlap)
+    private static bool TryBestAttachment(
+        NativeRect a,
+        NativeRect b,
+        int tolerance,
+        int minimumOverlap,
+        out AttachmentEdge attachment,
+        out long bestScore)
     {
-        long best = long.MinValue;
+        attachment = default;
+        bestScore = long.MinValue;
 
         var verticalOverlap = Math.Min(a.Bottom, b.Bottom) - Math.Max(a.Top, b.Top);
         if (verticalOverlap >= minimumOverlap)
         {
-            ScoreEdge(Math.Abs(a.Right - b.Left), verticalOverlap, tolerance, ref best);
-            ScoreEdge(Math.Abs(a.Left - b.Right), verticalOverlap, tolerance, ref best);
+            ScoreAttachment(Math.Abs(a.Right - b.Left), verticalOverlap, tolerance, AttachmentEdge.ARightToBLeft, ref attachment, ref bestScore);
+            ScoreAttachment(Math.Abs(a.Left - b.Right), verticalOverlap, tolerance, AttachmentEdge.ALeftToBRight, ref attachment, ref bestScore);
         }
 
         var horizontalOverlap = Math.Min(a.Right, b.Right) - Math.Max(a.Left, b.Left);
         if (horizontalOverlap >= minimumOverlap)
         {
-            ScoreEdge(Math.Abs(a.Bottom - b.Top), horizontalOverlap, tolerance, ref best);
-            ScoreEdge(Math.Abs(a.Top - b.Bottom), horizontalOverlap, tolerance, ref best);
+            ScoreAttachment(Math.Abs(a.Bottom - b.Top), horizontalOverlap, tolerance, AttachmentEdge.ABottomToBTop, ref attachment, ref bestScore);
+            ScoreAttachment(Math.Abs(a.Top - b.Bottom), horizontalOverlap, tolerance, AttachmentEdge.ATopToBBottom, ref attachment, ref bestScore);
         }
 
-        return best;
+        return bestScore != long.MinValue;
     }
 
-    private static void ScoreEdge(int gap, int overlap, int tolerance, ref long best)
+    private static void ScoreAttachment(
+        int gap,
+        int overlap,
+        int tolerance,
+        AttachmentEdge candidate,
+        ref AttachmentEdge bestAttachment,
+        ref long bestScore)
     {
         if (gap > tolerance)
         {
             return;
         }
 
-        // Long shared edges win first; exact/near-exact contact wins ties.
         var score = (long)overlap * 10000L - gap * 100L;
-        if (score > best)
+        if (score > bestScore)
         {
-            best = score;
+            bestScore = score;
+            bestAttachment = candidate;
         }
     }
 
@@ -332,13 +514,26 @@ public sealed class ReliableWindowLinkService : IDisposable
         return TryGetVisualRect(hwnd, out var rect) && rect.Width >= 80 && rect.Height >= 60;
     }
 
+    private static bool TryGetWindowGeometry(IntPtr hwnd, out NativeRect raw, out NativeRect visual)
+    {
+        raw = default;
+        visual = default;
+        if (!GetWindowRect(hwnd, out raw) || raw.Width <= 0 || raw.Height <= 0)
+        {
+            return false;
+        }
+
+        if (!TryGetVisualRect(hwnd, out visual))
+        {
+            visual = raw;
+        }
+
+        return visual.Width > 0 && visual.Height > 0;
+    }
+
     private static bool TryGetVisualRect(IntPtr hwnd, out NativeRect rect)
     {
-        if (DwmGetWindowAttribute(
-                hwnd,
-                DwmwaExtendedFrameBounds,
-                out rect,
-                Marshal.SizeOf<NativeRect>()) == 0 &&
+        if (DwmGetWindowAttribute(hwnd, DwmwaExtendedFrameBounds, out rect, Marshal.SizeOf<NativeRect>()) == 0 &&
             rect.Width > 0 && rect.Height > 0)
         {
             return true;
@@ -401,29 +596,71 @@ public sealed class ReliableWindowLinkService : IDisposable
         _byWindow.Clear();
     }
 
+    private enum AttachmentEdge
+    {
+        ARightToBLeft,
+        ALeftToBRight,
+        ABottomToBTop,
+        ATopToBBottom
+    }
+
+    private readonly record struct AttachmentCandidate(IntPtr Hwnd, AttachmentEdge Attachment, long Score);
+    private readonly record struct VisualPoint(int Left, int Top);
+
     private sealed class LinkedPair
     {
-        public LinkedPair(IntPtr a, IntPtr b, NativeRect lastA, NativeRect lastB)
+        private IntPtr _syntheticHwnd;
+        private DateTime _syntheticUntilUtc;
+        private IntPtr _stabilizationLeader;
+        private DateTime _stabilizationUntilUtc;
+
+        public LinkedPair(IntPtr a, IntPtr b, AttachmentEdge attachment, int alongOffset, NativeRect lastA, NativeRect lastB)
         {
             A = a;
             B = b;
+            Attachment = attachment;
+            AlongOffset = alongOffset;
             LastA = lastA;
             LastB = lastB;
         }
 
         public IntPtr A { get; }
         public IntPtr B { get; }
-        public NativeRect LastA { get; private set; }
-        public NativeRect LastB { get; private set; }
+        public AttachmentEdge Attachment { get; }
+        public int AlongOffset { get; }
+        public NativeRect LastA { get; set; }
+        public NativeRect LastB { get; set; }
         public bool Applying { get; set; }
+        public IntPtr ActiveLeader { get; set; }
 
         public IntPtr Other(IntPtr hwnd) => hwnd == A ? B : hwnd == B ? A : IntPtr.Zero;
-        public NativeRect GetLast(IntPtr hwnd) => hwnd == A ? LastA : LastB;
 
-        public void SetLast(IntPtr hwnd, NativeRect rect)
+        public void SuppressSynthetic(IntPtr hwnd, TimeSpan duration)
         {
-            if (hwnd == A) LastA = rect;
-            else if (hwnd == B) LastB = rect;
+            _syntheticHwnd = hwnd;
+            _syntheticUntilUtc = DateTime.UtcNow + duration;
+        }
+
+        public bool IsSyntheticSuppressed(IntPtr hwnd)
+            => hwnd == _syntheticHwnd && DateTime.UtcNow <= _syntheticUntilUtc;
+
+        public void BeginStabilization(IntPtr leader, TimeSpan duration)
+        {
+            _stabilizationLeader = leader;
+            _stabilizationUntilUtc = DateTime.UtcNow + duration;
+        }
+
+        public bool TryGetStabilizationLeader(out IntPtr leader)
+        {
+            if (_stabilizationLeader != IntPtr.Zero && DateTime.UtcNow <= _stabilizationUntilUtc)
+            {
+                leader = _stabilizationLeader;
+                return true;
+            }
+
+            _stabilizationLeader = IntPtr.Zero;
+            leader = IntPtr.Zero;
+            return false;
         }
     }
 
@@ -434,14 +671,6 @@ public sealed class ReliableWindowLinkService : IDisposable
         public int Top;
         public int Right;
         public int Bottom;
-
-        public NativeRect(int left, int top, int right, int bottom)
-        {
-            Left = left;
-            Top = top;
-            Right = right;
-            Bottom = bottom;
-        }
 
         public readonly int Width => Right - Left;
         public readonly int Height => Bottom - Top;
@@ -459,14 +688,7 @@ public sealed class ReliableWindowLinkService : IDisposable
     private delegate bool EnumWindowsDelegate(IntPtr hwnd, IntPtr lParam);
 
     [DllImport("user32.dll")]
-    private static extern IntPtr SetWinEventHook(
-        uint eventMin,
-        uint eventMax,
-        IntPtr module,
-        WinEventDelegate callback,
-        uint processId,
-        uint threadId,
-        uint flags);
+    private static extern IntPtr SetWinEventHook(uint eventMin, uint eventMax, IntPtr module, WinEventDelegate callback, uint processId, uint threadId, uint flags);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -509,14 +731,7 @@ public sealed class ReliableWindowLinkService : IDisposable
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool SetWindowPos(
-        IntPtr hwnd,
-        IntPtr insertAfter,
-        int x,
-        int y,
-        int width,
-        int height,
-        uint flags);
+    private static extern bool SetWindowPos(IntPtr hwnd, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
 
     [DllImport("dwmapi.dll")]
     private static extern int DwmGetWindowAttribute(IntPtr hwnd, int attribute, out NativeRect value, int size);

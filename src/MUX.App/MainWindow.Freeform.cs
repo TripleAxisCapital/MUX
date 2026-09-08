@@ -34,7 +34,7 @@ public partial class MainWindow
 
         _captionPillController = new DisplayFilteredCaptionPillController(
             () => new DisplaySizingSnapshot(_state.Displays, _state.ActiveDisplayDeviceName),
-            () => _state.CaptionPillDisabledDisplayDeviceNames ?? Array.Empty<string>());
+            () => _state.CaptionPillDisabledDisplayDeviceNames);
         _captionPillController.Start();
     }
 

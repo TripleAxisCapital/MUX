@@ -5,6 +5,7 @@ public sealed class ShortcutSettings
     public ShortcutBinding ToggleMaximize { get; set; } = ShortcutBinding.CtrlAlt("M");
     public ShortcutBinding ToggleFullscreen { get; set; } = ShortcutBinding.CtrlAlt("F");
     public ShortcutBinding ToggleEdgeCovers { get; set; } = ShortcutBinding.CtrlAlt("B");
+    public ShortcutBinding AutoArrange { get; set; } = ShortcutBinding.CtrlAlt("A");
     public ShortcutBinding PreviousMonitor { get; set; } = ShortcutBinding.CtrlAlt("Left");
     public ShortcutBinding NextMonitor { get; set; } = ShortcutBinding.CtrlAlt("Right");
     public ShortcutBinding EditLayout { get; set; } = ShortcutBinding.CtrlAlt("E");

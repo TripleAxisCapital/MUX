@@ -226,13 +226,11 @@ public sealed class MagneticSnapService : IDisposable
             return;
         }
 
-        var adjusted = new NativeRect
-        {
-            Left = raw.Left + deltaX,
-            Top = raw.Top + deltaY,
-            Right = raw.Right + deltaX,
-            Bottom = raw.Bottom + deltaY
-        };
+        var adjusted = new NativeRect(
+            raw.Left + deltaX,
+            raw.Top + deltaY,
+            raw.Right + deltaX,
+            raw.Bottom + deltaY);
 
         _lastAppliedRawRect = adjusted;
         SetWindowPos(

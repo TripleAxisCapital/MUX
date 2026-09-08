@@ -9,7 +9,7 @@ namespace MUX.App.Windows;
 
 public partial class CaptionResizePillWindow
 {
-    private WindowLinkService? _windowLinkService;
+    private ReliableWindowLinkService? _windowLinkService;
     private Button? _windowLinkButton;
     private ShapePath? _windowLinkGlyph;
     private DispatcherTimer? _windowLinkVisualTimer;
@@ -28,7 +28,7 @@ public partial class CaptionResizePillWindow
         {
             try
             {
-                _windowLinkService = new WindowLinkService();
+                _windowLinkService = new ReliableWindowLinkService();
                 _windowLinkService.Changed += WindowLinkService_Changed;
             }
             catch
@@ -43,7 +43,7 @@ public partial class CaptionResizePillWindow
         {
             _windowLinkVisualTimer = new DispatcherTimer(DispatcherPriority.Background)
             {
-                Interval = TimeSpan.FromMilliseconds(110)
+                Interval = TimeSpan.FromMilliseconds(90)
             };
             _windowLinkVisualTimer.Tick += WindowLinkVisualTimer_Tick;
             _windowLinkVisualTimer.Start();
@@ -60,18 +60,18 @@ public partial class CaptionResizePillWindow
             return;
         }
 
-        // Four utility actions share the existing 78-DIP cluster. This keeps the pill right-anchored
-        // exactly as before and prevents the new control from pushing beyond the target window.
+        // All four utility controls remain visible in the existing 78-DIP cluster. The link control
+        // never disappears; it simply enables when an attachable partner exists.
         controlGrid.ColumnDefinitions.Clear();
-        controlGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(26) });
+        controlGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(22) });
         controlGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1) });
-        controlGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(12) });
+        controlGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(13) });
         controlGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1) });
-        controlGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(12) });
+        controlGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(13) });
         controlGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1) });
-        controlGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(12) });
+        controlGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(13) });
         controlGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1) });
-        controlGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(12) });
+        controlGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(13) });
 
         if (CollapsedPanel.ColumnDefinitions.Count > 6)
         {
@@ -85,50 +85,50 @@ public partial class CaptionResizePillWindow
         {
             currentSizeBorder.Padding = new Thickness(0.5, 0, 0.5, 0);
         }
-        CurrentSizeText.FontSize = 8.0;
+        CurrentSizeText.FontSize = 7.8;
 
-        MagnetButton.Width = 12;
+        MagnetButton.Width = 13;
         MagnetButton.Padding = new Thickness(0);
         Grid.SetColumn(MagnetButton, 2);
         if (MagnetButton.Content is Viewbox magnetViewbox)
         {
-            magnetViewbox.Width = 10;
-            magnetViewbox.Height = 10;
+            magnetViewbox.Width = 11;
+            magnetViewbox.Height = 11;
         }
 
         if (_edgeCoverButton is not null)
         {
-            _edgeCoverButton.Width = 12;
+            _edgeCoverButton.Width = 13;
             _edgeCoverButton.Padding = new Thickness(0);
             Grid.SetColumn(_edgeCoverButton, 4);
             if (_edgeCoverButton.Content is Viewbox edgeViewbox)
             {
-                edgeViewbox.Width = 10;
-                edgeViewbox.Height = 10;
+                edgeViewbox.Width = 11;
+                edgeViewbox.Height = 11;
             }
         }
 
         if (_sizeLockButton is not null)
         {
-            _sizeLockButton.Width = 12;
+            _sizeLockButton.Width = 13;
             _sizeLockButton.Padding = new Thickness(0);
             Grid.SetColumn(_sizeLockButton, 6);
             if (_sizeLockButton.Content is Viewbox lockViewbox)
             {
-                lockViewbox.Width = 10;
-                lockViewbox.Height = 10;
+                lockViewbox.Width = 11;
+                lockViewbox.Height = 11;
             }
         }
 
         _windowLinkGlyph = new ShapePath
         {
-            Width = 11,
-            Height = 11,
+            Width = 12,
+            Height = 12,
             Stretch = Stretch.Uniform,
             Data = WindowLinkGeometry,
             Fill = Brushes.Transparent,
-            Stroke = new SolidColorBrush(Color.FromRgb(156, 156, 164)),
-            StrokeThickness = 1.65,
+            Stroke = new SolidColorBrush(Color.FromRgb(142, 142, 150)),
+            StrokeThickness = 1.75,
             StrokeStartLineCap = PenLineCap.Round,
             StrokeEndLineCap = PenLineCap.Round,
             StrokeLineJoin = PenLineJoin.Round,
@@ -137,20 +137,21 @@ public partial class CaptionResizePillWindow
 
         var glyphViewbox = new Viewbox
         {
-            Width = 10,
-            Height = 10,
+            Width = 11,
+            Height = 11,
             Stretch = Stretch.Uniform,
             Child = _windowLinkGlyph
         };
 
         _windowLinkButton = new Button
         {
-            Width = 12,
+            Width = 13,
             Height = 34,
             Padding = new Thickness(0),
-            ToolTip = "Link Windows",
+            ToolTip = "Link Windows · snap another window against this one first",
             Content = glyphViewbox,
-            Visibility = Visibility.Collapsed
+            Visibility = Visibility.Visible,
+            IsEnabled = false
         };
         _windowLinkButton.SetResourceReference(FrameworkElement.StyleProperty, "PillButton");
         _windowLinkButton.Click += WindowLinkButton_Click;
@@ -182,7 +183,11 @@ public partial class CaptionResizePillWindow
 
         try
         {
-            _windowLinkService.ToggleLink(_targetHwnd);
+            var linkedAfterClick = _windowLinkService.ToggleLink(_targetHwnd);
+            if (!alreadyLinked && !linkedAfterClick && _windowLinkButton is not null)
+            {
+                _windowLinkButton.ToolTip = "Snap another window against this window, then click Link Windows.";
+            }
         }
         catch
         {
@@ -196,20 +201,11 @@ public partial class CaptionResizePillWindow
     }
 
     private void WindowLinkVisualTimer_Tick(object? sender, EventArgs e)
-    {
-        RefreshWindowLinkAvailability(force: false);
-    }
+        => RefreshWindowLinkAvailability(force: false);
 
     private void WindowLinkService_Changed(object? sender, EventArgs e)
     {
-        try
-        {
-            RefreshWindowLinkAvailability(force: true);
-        }
-        catch
-        {
-            // Link UI must never destabilize the pill.
-        }
+        try { RefreshWindowLinkAvailability(force: true); } catch { }
     }
 
     private void RefreshWindowLinkAvailability(bool force = false)
@@ -221,21 +217,21 @@ public partial class CaptionResizePillWindow
 
         var target = _targetHwnd;
         var linked = target != IntPtr.Zero && _windowLinkService?.IsLinked(target) == true;
-        var touchingPartner = IntPtr.Zero;
+        var partner = IntPtr.Zero;
 
         if (!linked && target != IntPtr.Zero && _magneticSnappingEnabled && _windowLinkService is not null)
         {
             try
             {
-                touchingPartner = _windowLinkService.FindTouchingWindow(target);
+                partner = _windowLinkService.FindAttachablePartner(target);
             }
             catch
             {
-                touchingPartner = IntPtr.Zero;
+                partner = IntPtr.Zero;
             }
         }
 
-        var available = linked || touchingPartner != IntPtr.Zero;
+        var available = linked || partner != IntPtr.Zero;
         if (!force &&
             target == _lastWindowLinkTarget &&
             available == _lastWindowLinkAvailable &&
@@ -248,20 +244,32 @@ public partial class CaptionResizePillWindow
         _lastWindowLinkAvailable = available;
         _lastWindowLinked = linked;
 
-        _windowLinkButton.Visibility = available ? Visibility.Visible : Visibility.Collapsed;
+        // Never collapse this button again. Its disabled state communicates exactly what is missing.
+        _windowLinkButton.Visibility = Visibility.Visible;
+        _windowLinkButton.IsEnabled = available;
         _windowLinkButton.Background = new SolidColorBrush(
             linked
                 ? Color.FromRgb(62, 62, 69)
-                : Color.FromRgb(31, 31, 35));
-        _windowLinkButton.Opacity = linked ? 1.0 : 0.78;
+                : available
+                    ? Color.FromRgb(42, 42, 47)
+                    : Color.FromRgb(31, 31, 35));
+        _windowLinkButton.Opacity = linked ? 1.0 : available ? 0.9 : 0.62;
         _windowLinkGlyph.Stroke = new SolidColorBrush(
             linked
                 ? Color.FromRgb(245, 245, 247)
-                : Color.FromRgb(176, 176, 184));
+                : available
+                    ? Color.FromRgb(214, 214, 220)
+                    : Color.FromRgb(142, 142, 150));
 
-        _windowLinkButton.ToolTip = linked
-            ? "Unlink Windows · stop moving this pair together"
-            : "Link Windows · keep these magnetically attached windows moving together";
+        _windowLinkButton.ToolTip = target == IntPtr.Zero
+            ? "Link Windows · point at a window first"
+            : linked
+                ? "Unlink Windows · stop moving this pair together"
+                : !_magneticSnappingEnabled
+                    ? "Link Windows · turn magnetic snapping on first"
+                    : available
+                        ? "Link Windows · lock these attached windows together"
+                        : "Link Windows · snap another window against this one first";
     }
 
     private void DisposeWindowLinkControls()

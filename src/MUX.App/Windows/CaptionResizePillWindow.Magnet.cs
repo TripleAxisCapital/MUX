@@ -26,10 +26,12 @@ public partial class CaptionResizePillWindow
         UpdateMagnetVisual();
         InitializeEdgeCoverControls();
         InitializeSizeLockControls();
+        InitializeWindowLinkControls();
     }
 
     private void MagnetWindow_Closed(object? sender, EventArgs e)
     {
+        DisposeWindowLinkControls();
         DisposeSizeLockControls();
         DisposeEdgeCoverControls();
 
@@ -47,6 +49,7 @@ public partial class CaptionResizePillWindow
 
         SaveMagneticSnappingEnabled(_magneticSnappingEnabled);
         UpdateMagnetVisual();
+        RefreshWindowLinkAvailability(force: true);
     }
 
     private void UpdateMagnetVisual()

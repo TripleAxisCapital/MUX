@@ -16,6 +16,7 @@ public partial class CaptionResizePillWindow
     private IntPtr _lastWindowLinkTarget;
     private bool _lastWindowLinkAvailable;
     private bool _lastWindowLinked;
+    private int _lastWindowLinkGroupSize;
 
     private static readonly Geometry WindowLinkGeometry = Geometry.Parse(
         "M6.6,5.2 L4.8,7 C3.7,8.1 3.7,9.9 4.8,11 C5.9,12.1 7.7,12.1 8.8,11 L10.6,9.2 " +
@@ -28,7 +29,8 @@ public partial class CaptionResizePillWindow
         {
             try
             {
-                _windowLinkService = new ReliableWindowLinkService();
+                _windowLinkService = ReliableWindowLinkService.Shared;
+                _windowLinkService.GroupSnappingEnabled = _magneticSnappingEnabled;
                 _windowLinkService.Changed += WindowLinkService_Changed;
             }
             catch
@@ -60,8 +62,6 @@ public partial class CaptionResizePillWindow
             return;
         }
 
-        // All four utility controls remain visible in the existing 78-DIP cluster. The link control
-        // never disappears; it simply enables when an attachable partner exists.
         controlGrid.ColumnDefinitions.Clear();
         controlGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(22) });
         controlGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1) });
@@ -78,9 +78,7 @@ public partial class CaptionResizePillWindow
             CollapsedPanel.ColumnDefinitions[6].Width = new GridLength(78);
         }
 
-        var currentSizeBorder = controlGrid.Children
-            .OfType<Border>()
-            .FirstOrDefault(child => Grid.GetColumn(child) == 0);
+        var currentSizeBorder = controlGrid.Children.OfType<Border>().FirstOrDefault(child => Grid.GetColumn(child) == 0);
         if (currentSizeBorder is not null)
         {
             currentSizeBorder.Padding = new Thickness(0.5, 0, 0.5, 0);
@@ -135,21 +133,19 @@ public partial class CaptionResizePillWindow
             SnapsToDevicePixels = true
         };
 
-        var glyphViewbox = new Viewbox
-        {
-            Width = 11,
-            Height = 11,
-            Stretch = Stretch.Uniform,
-            Child = _windowLinkGlyph
-        };
-
         _windowLinkButton = new Button
         {
             Width = 13,
             Height = 34,
             Padding = new Thickness(0),
-            ToolTip = "Link Windows · snap another window against this one first",
-            Content = glyphViewbox,
+            ToolTip = "Link touching windows",
+            Content = new Viewbox
+            {
+                Width = 11,
+                Height = 11,
+                Stretch = Stretch.Uniform,
+                Child = _windowLinkGlyph
+            },
             Visibility = Visibility.Visible,
             IsEnabled = false
         };
@@ -171,29 +167,26 @@ public partial class CaptionResizePillWindow
             return;
         }
 
-        var alreadyLinked = _windowLinkService.IsLinked(_targetHwnd);
-        if (!alreadyLinked && !_magneticSnappingEnabled)
-        {
-            if (_windowLinkButton is not null)
-            {
-                _windowLinkButton.ToolTip = "Turn on magnetic snapping and attach two windows first.";
-            }
-            return;
-        }
-
         try
         {
-            var linkedAfterClick = _windowLinkService.ToggleLink(_targetHwnd);
-            if (!alreadyLinked && !linkedAfterClick && _windowLinkButton is not null)
+            _windowLinkService.GroupSnappingEnabled = _magneticSnappingEnabled;
+            var linkedBefore = _windowLinkService.IsLinked(_targetHwnd);
+            var groupBefore = _windowLinkService.GetGroupSize(_targetHwnd);
+            var touchingExternal = _windowLinkService.FindAttachablePartner(_targetHwnd) != IntPtr.Zero;
+            var linkedAfter = _windowLinkService.ToggleLink(_targetHwnd);
+
+            if (_windowLinkButton is not null && linkedBefore && !touchingExternal && !linkedAfter)
             {
-                _windowLinkButton.ToolTip = "Snap another window against this window, then click Link Windows.";
+                _windowLinkButton.ToolTip = groupBefore > 1
+                    ? $"Unlinked {groupBefore} windows"
+                    : "Windows unlinked";
             }
         }
         catch
         {
             if (_windowLinkButton is not null)
             {
-                _windowLinkButton.ToolTip = "MUX could not link these windows.";
+                _windowLinkButton.ToolTip = "MUX could not update this linked window group.";
             }
         }
 
@@ -217,25 +210,30 @@ public partial class CaptionResizePillWindow
 
         var target = _targetHwnd;
         var linked = target != IntPtr.Zero && _windowLinkService?.IsLinked(target) == true;
-        var partner = IntPtr.Zero;
+        var groupSize = linked ? _windowLinkService?.GetGroupSize(target) ?? 0 : 0;
+        var touchingExternal = false;
 
-        if (!linked && target != IntPtr.Zero && _magneticSnappingEnabled && _windowLinkService is not null)
+        if (target != IntPtr.Zero && _windowLinkService is not null)
         {
             try
             {
-                partner = _windowLinkService.FindAttachablePartner(target);
+                touchingExternal = _windowLinkService.FindAttachablePartner(target) != IntPtr.Zero;
             }
             catch
             {
-                partner = IntPtr.Zero;
+                touchingExternal = false;
             }
         }
 
-        var available = linked || partner != IntPtr.Zero;
+        // An existing group can always be clicked: touching outsiders are absorbed; with no
+        // outsiders the same control unlinks the group. An unlinked window enables as soon as any
+        // other eligible window is physically touching it.
+        var available = linked || touchingExternal;
         if (!force &&
             target == _lastWindowLinkTarget &&
             available == _lastWindowLinkAvailable &&
-            linked == _lastWindowLinked)
+            linked == _lastWindowLinked &&
+            groupSize == _lastWindowLinkGroupSize)
         {
             return;
         }
@@ -243,33 +241,25 @@ public partial class CaptionResizePillWindow
         _lastWindowLinkTarget = target;
         _lastWindowLinkAvailable = available;
         _lastWindowLinked = linked;
+        _lastWindowLinkGroupSize = groupSize;
 
-        // Never collapse this button again. Its disabled state communicates exactly what is missing.
         _windowLinkButton.Visibility = Visibility.Visible;
         _windowLinkButton.IsEnabled = available;
         _windowLinkButton.Background = new SolidColorBrush(
-            linked
-                ? Color.FromRgb(62, 62, 69)
-                : available
-                    ? Color.FromRgb(42, 42, 47)
-                    : Color.FromRgb(31, 31, 35));
+            linked ? Color.FromRgb(62, 62, 69) : available ? Color.FromRgb(42, 42, 47) : Color.FromRgb(31, 31, 35));
         _windowLinkButton.Opacity = linked ? 1.0 : available ? 0.9 : 0.62;
         _windowLinkGlyph.Stroke = new SolidColorBrush(
-            linked
-                ? Color.FromRgb(245, 245, 247)
-                : available
-                    ? Color.FromRgb(214, 214, 220)
-                    : Color.FromRgb(142, 142, 150));
+            linked ? Color.FromRgb(245, 245, 247) : available ? Color.FromRgb(214, 214, 220) : Color.FromRgb(142, 142, 150));
 
         _windowLinkButton.ToolTip = target == IntPtr.Zero
             ? "Link Windows · point at a window first"
-            : linked
-                ? "Unlink Windows · stop moving this pair together"
-                : !_magneticSnappingEnabled
-                    ? "Link Windows · turn magnetic snapping on first"
+            : linked && touchingExternal
+                ? $"Link Windows · {groupSize} linked · click to absorb every touching window"
+                : linked
+                    ? $"Linked group · {groupSize} windows · click to unlink"
                     : available
-                        ? "Link Windows · lock these attached windows together"
-                        : "Link Windows · snap another window against this one first";
+                        ? "Link Windows · link the entire touching window cluster"
+                        : "Link Windows · move another window flush against this one first";
     }
 
     private void DisposeWindowLinkControls()
@@ -283,14 +273,9 @@ public partial class CaptionResizePillWindow
 
         if (_windowLinkService is not null)
         {
-            try
-            {
-                _windowLinkService.Changed -= WindowLinkService_Changed;
-                _windowLinkService.Dispose();
-            }
-            catch
-            {
-            }
+            try { _windowLinkService.Changed -= WindowLinkService_Changed; } catch { }
+            // The shared coordinator intentionally outlives the pill so linked groups survive
+            // display filtering and pill recreation.
             _windowLinkService = null;
         }
 

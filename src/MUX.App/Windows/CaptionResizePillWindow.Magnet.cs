@@ -27,6 +27,10 @@ public partial class CaptionResizePillWindow
         InitializeEdgeCoverControls();
         InitializeSizeLockControls();
         InitializeWindowLinkControls();
+        if (_windowLinkService is not null)
+        {
+            _windowLinkService.GroupSnappingEnabled = _magneticSnappingEnabled;
+        }
     }
 
     private void MagnetWindow_Closed(object? sender, EventArgs e)
@@ -45,6 +49,10 @@ public partial class CaptionResizePillWindow
         if (_magneticSnapService is not null)
         {
             _magneticSnapService.Enabled = _magneticSnappingEnabled;
+        }
+        if (_windowLinkService is not null)
+        {
+            _windowLinkService.GroupSnappingEnabled = _magneticSnappingEnabled;
         }
 
         SaveMagneticSnappingEnabled(_magneticSnappingEnabled);

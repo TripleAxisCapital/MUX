@@ -3,47 +3,42 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:controls="clr-namespace:MUX.App.Controls"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
-        Title="MUX" Width="1320" Height="820" MinWidth="1120" MinHeight="700"
+        Title="MUX" Width="1180" Height="760" MinWidth="1040" MinHeight="660"
         Background="{StaticResource BackgroundBrush}" WindowStyle="None" ResizeMode="CanResize"
         FontFamily="Segoe UI Variable Text, Segoe UI">
     <shell:WindowChrome.WindowChrome>
-        <shell:WindowChrome CaptionHeight="46" ResizeBorderThickness="6" CornerRadius="0" GlassFrameThickness="0" />
+        <shell:WindowChrome CaptionHeight="44" ResizeBorderThickness="6" CornerRadius="0" GlassFrameThickness="0" />
     </shell:WindowChrome.WindowChrome>
 
     <Grid>
         <Grid.RowDefinitions>
-            <RowDefinition Height="46" />
+            <RowDefinition Height="44" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <Grid Grid.Row="0" Background="#0D0D0F">
+        <Grid Grid.Row="0" Background="#0C0C0E">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="18,0,0,0">
-                <Image Width="22" Height="22"
-                       Source="pack://application:,,,/Assets/mux-logo.png"
-                       Stretch="UniformToFill"
-                       SnapsToDevicePixels="True"
-                       Margin="0,0,10,0" />
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0,0,0">
+                <Image Width="20" Height="20" Source="pack://application:,,,/Assets/mux-logo.png" Stretch="UniformToFill" SnapsToDevicePixels="True" Margin="0,0,9,0" />
                 <TextBlock Text="MUX" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" />
-                <TextBlock Text="  /  Display workspace" Foreground="#676770" FontSize="12" VerticalAlignment="Center" />
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" shell:WindowChrome.IsHitTestVisibleInChrome="True">
-                <Button Content="—" Width="48" Height="46" Background="Transparent" BorderThickness="0" Foreground="#A0A0A8" FontSize="16" Click="Minimize_Click" />
-                <Button Content="×" Width="48" Height="46" Background="Transparent" BorderThickness="0" Foreground="#A0A0A8" FontSize="19" Click="Close_Click" />
+                <Button Content="—" Width="46" Height="44" Background="Transparent" BorderThickness="0" Foreground="#96969F" FontSize="15" Click="Minimize_Click" />
+                <Button Content="×" Width="46" Height="44" Background="Transparent" BorderThickness="0" Foreground="#96969F" FontSize="18" Click="Close_Click" />
             </StackPanel>
         </Grid>
 
         <Grid Grid.Row="1">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="248" />
+                <ColumnDefinition Width="196" />
                 <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="294" />
+                <ColumnDefinition Width="268" />
             </Grid.ColumnDefinitions>
 
-            <Border Grid.Column="0" Background="#0D0D0F" BorderBrush="#1F1F23" BorderThickness="0,1,1,0" Padding="18,20">
+            <Border Grid.Column="0" Background="#0C0C0E" BorderBrush="#1F1F23" BorderThickness="0,1,1,0" Padding="14,16">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
@@ -52,58 +47,50 @@
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
-                    <StackPanel>
-                        <TextBlock Text="One display. Many." FontSize="22" FontWeight="SemiBold" />
-                        <TextBlock Text="Turn physical screen space into monitor-sized workspaces." TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" FontSize="12" LineHeight="18" Margin="0,8,4,0" />
-                    </StackPanel>
-
-                    <Button x:Name="EngineToggleButton" Grid.Row="1" Style="{StaticResource MuxButton}" HorizontalContentAlignment="Stretch" Margin="0,22,0,18" Click="EngineToggle_Click">
+                    <Button x:Name="EngineToggleButton" Style="{StaticResource MuxButton}" HorizontalContentAlignment="Stretch" Padding="11,9" Click="EngineToggle_Click">
                         <Grid>
                             <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                             <StackPanel>
-                                <TextBlock Text="MUX Engine" FontSize="13" FontWeight="SemiBold" />
-                                <TextBlock x:Name="EngineSubtitle" Text="Active" FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="0,2,0,0" />
+                                <TextBlock Text="MUX" FontSize="12" FontWeight="SemiBold" />
+                                <TextBlock x:Name="EngineSubtitle" Text="Active" FontSize="10" Foreground="{StaticResource MutedBrush}" Margin="0,2,0,0" />
                             </StackPanel>
-                            <Border x:Name="EngineDot" Grid.Column="1" Width="9" Height="9" CornerRadius="5" Background="#8CFFB0" VerticalAlignment="Center" />
+                            <Border x:Name="EngineDot" Grid.Column="1" Width="8" Height="8" CornerRadius="4" Background="#8CFFB0" VerticalAlignment="Center" />
                         </Grid>
                     </Button>
 
-                    <Grid Grid.Row="2">
-                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-                        <TextBlock Text="LAYOUTS" Foreground="#65656D" FontSize="10" FontWeight="SemiBold" Margin="4,0,0,9" />
-                        <ListBox x:Name="LayoutList" Grid.Row="1" Background="Transparent" BorderThickness="0" Foreground="White"
-                                 SelectionChanged="LayoutList_SelectionChanged" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                            <ListBox.ItemContainerStyle>
-                                <Style TargetType="ListBoxItem">
-                                    <Setter Property="Padding" Value="10,10" />
-                                    <Setter Property="Margin" Value="0,2" />
-                                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                                    <Setter Property="Background" Value="Transparent" />
-                                    <Setter Property="BorderThickness" Value="0" />
-                                    <Setter Property="Template">
-                                        <Setter.Value>
-                                            <ControlTemplate TargetType="ListBoxItem">
-                                                <Border x:Name="ItemRoot" Background="{TemplateBinding Background}" CornerRadius="9" Padding="{TemplateBinding Padding}">
-                                                    <ContentPresenter />
-                                                </Border>
-                                                <ControlTemplate.Triggers>
-                                                    <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="ItemRoot" Property="Background" Value="#17171A" /></Trigger>
-                                                    <Trigger Property="IsSelected" Value="True"><Setter TargetName="ItemRoot" Property="Background" Value="#242428" /></Trigger>
-                                                </ControlTemplate.Triggers>
-                                            </ControlTemplate>
-                                        </Setter.Value>
-                                    </Setter>
-                                </Style>
-                            </ListBox.ItemContainerStyle>
-                        </ListBox>
-                        <Grid Grid.Row="2" Margin="0,12,0,0">
-                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="8"/><ColumnDefinition/></Grid.ColumnDefinitions>
-                            <Button Content="+ New" Style="{StaticResource MuxButton}" Padding="9,7" Click="NewLayout_Click" />
-                            <Button Grid.Column="2" Content="Delete" Style="{StaticResource MuxButton}" Padding="9,7" Click="DeleteLayout_Click" />
-                        </Grid>
-                    </Grid>
+                    <TextBlock Grid.Row="1" Text="LAYOUTS" Foreground="#606068" FontSize="9" FontWeight="SemiBold" Margin="4,20,0,8" />
 
-                    <TextBlock Grid.Row="3" Text="MUX stays active in the system tray when this window closes." TextWrapping="Wrap" Foreground="#5F5F67" FontSize="10" LineHeight="15" Margin="4,18,4,0" />
+                    <ListBox x:Name="LayoutList" Grid.Row="2" Background="Transparent" BorderThickness="0" Foreground="White"
+                             SelectionChanged="LayoutList_SelectionChanged" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                        <ListBox.ItemContainerStyle>
+                            <Style TargetType="ListBoxItem">
+                                <Setter Property="Padding" Value="9,9" />
+                                <Setter Property="Margin" Value="0,1" />
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                <Setter Property="Background" Value="Transparent" />
+                                <Setter Property="BorderThickness" Value="0" />
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="ListBoxItem">
+                                            <Border x:Name="ItemRoot" Background="{TemplateBinding Background}" CornerRadius="8" Padding="{TemplateBinding Padding}">
+                                                <ContentPresenter />
+                                            </Border>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="ItemRoot" Property="Background" Value="#17171A" /></Trigger>
+                                                <Trigger Property="IsSelected" Value="True"><Setter TargetName="ItemRoot" Property="Background" Value="#222226" /></Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                        </ListBox.ItemContainerStyle>
+                    </ListBox>
+
+                    <Grid Grid.Row="3" Margin="0,12,0,0">
+                        <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="6"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                        <Button Content="+ New" Style="{StaticResource MuxButton}" Padding="8,7" Click="NewLayout_Click" />
+                        <Button Grid.Column="2" Content="Delete" Style="{StaticResource MuxButton}" Padding="8,7" Click="DeleteLayout_Click" />
+                    </Grid>
                 </Grid>
             </Border>
 
@@ -114,94 +101,81 @@
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
-                <Grid Margin="30,25,30,16">
+                <Grid Margin="24,20,24,14">
                     <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                    <StackPanel>
-                        <TextBlock x:Name="LayoutTitle" Text="Workspace" FontSize="29" FontWeight="SemiBold" />
-                        <TextBlock x:Name="LayoutSubtitle" Text="0 virtual monitors" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="1,5,0,0" />
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock x:Name="LayoutTitle" Text="Workspace" FontSize="24" FontWeight="SemiBold" />
+                        <TextBlock x:Name="LayoutSubtitle" Text="0 virtual monitors" Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="1,3,0,0" />
                     </StackPanel>
                     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                        <Button Content="+ Add monitor" Style="{StaticResource MuxButton}" Click="AddMonitor_Click" />
-                        <Button Content="Edit on display" Margin="9,0,0,0" Style="{StaticResource MuxButton}" Foreground="#F5F5F7" Background="#19191C" BorderBrush="#2A2A2F" Click="EditOnDisplay_Click" />
+                        <Button Content="+ Monitor" Style="{StaticResource MuxButton}" Padding="12,8" Click="AddMonitor_Click" />
+                        <Button Content="Edit" Margin="7,0,0,0" Style="{StaticResource MuxButton}" Padding="12,8" Click="EditOnDisplay_Click" />
                     </StackPanel>
                 </Grid>
 
-                <Border Grid.Row="1" Margin="28,0,28,0" Background="#0D0D0F" BorderBrush="#222226" BorderThickness="1" CornerRadius="22">
+                <Border Grid.Row="1" Margin="22,0,22,0" Background="#0C0C0E" BorderBrush="#222226" BorderThickness="1" CornerRadius="18">
                     <Grid>
                         <controls:LayoutCanvas x:Name="WorkspaceCanvas" />
                         <StackPanel x:Name="EmptyState" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False">
-                            <TextBlock Text="Create your first monitor" FontSize="20" FontWeight="SemiBold" HorizontalAlignment="Center" />
-                            <TextBlock Text="Choose a physical size, then place it anywhere on your display." Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,7,0,0" HorizontalAlignment="Center" />
+                            <TextBlock Text="No monitors yet" FontSize="17" FontWeight="SemiBold" HorizontalAlignment="Center" />
+                            <TextBlock Text="Add one to start arranging this display." Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,5,0,0" HorizontalAlignment="Center" />
                         </StackPanel>
                     </Grid>
                 </Border>
 
-                <Grid Grid.Row="2" Margin="30,14,30,22">
+                <Grid Grid.Row="2" Margin="24,12,24,18">
                     <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                    <TextBlock Text="Hold Shift when finishing a drag to snap a window · Ctrl + Alt + M to maximize inside a MUX monitor" Foreground="#66666F" FontSize="10" VerticalAlignment="Center" />
-                    <Button Grid.Column="1" Content="Save" Style="{StaticResource MuxButton}" Padding="16,7" Click="Save_Click" />
+                    <TextBlock Text="Changes save automatically" Foreground="#5F5F67" FontSize="9" VerticalAlignment="Center" />
+                    <Button Grid.Column="1" Content="Save" Style="{StaticResource MuxButton}" Padding="14,7" Click="Save_Click" />
                 </Grid>
             </Grid>
 
-            <Border Grid.Column="2" Background="#0D0D0F" BorderBrush="#1F1F23" BorderThickness="1,1,0,0" Padding="20,20">
+            <Border Grid.Column="2" Background="#0C0C0E" BorderBrush="#1F1F23" BorderThickness="1,1,0,0" Padding="16,16">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                     <StackPanel>
-                        <TextBlock Text="PHYSICAL DISPLAY" Foreground="#65656D" FontSize="10" FontWeight="SemiBold" Margin="2,0,0,10" />
+                        <TextBlock Text="DISPLAY" Foreground="#606068" FontSize="9" FontWeight="SemiBold" Margin="2,0,0,8" />
                         <ComboBox x:Name="DisplayCombo" Style="{StaticResource MuxComboBox}" SelectionChanged="DisplayCombo_SelectionChanged" />
 
-                        <TextBlock Text="Physical diagonal" Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="2,18,0,7" />
-                        <Grid>
-                            <TextBox x:Name="DisplaySizeBox" Style="{StaticResource MuxTextBox}" Padding="11,9,42,9" LostFocus="DisplaySizeBox_LostFocus" />
-                            <TextBlock Text="in" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,13,0" />
+                        <Grid Margin="0,12,0,0">
+                            <TextBox x:Name="DisplaySizeBox" Style="{StaticResource MuxTextBox}" Padding="11,8,38,8" LostFocus="DisplaySizeBox_LostFocus" />
+                            <TextBlock Text="in" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,12,0" FontSize="11" />
                         </Grid>
-                        <TextBlock x:Name="DisplayMetricsText" Foreground="#696972" FontSize="10" Margin="2,8,0,0" TextWrapping="Wrap" />
+                        <TextBlock x:Name="DisplayMetricsText" Foreground="#66666F" FontSize="9" Margin="2,7,0,0" TextWrapping="Wrap" />
+                        <Button Content="Calibrate" Style="{StaticResource MuxButton}" Margin="0,10,0,0" Padding="10,7" Click="Calibrate_Click" />
 
-                        <Button Content="Calibrate with ruler" Style="{StaticResource MuxButton}" Margin="0,12,0,0" Click="Calibrate_Click" />
-
-                        <Border Height="1" Background="#242428" Margin="0,22,0,20" />
+                        <Border Height="1" Background="#242428" Margin="0,18,0,16" />
 
                         <StackPanel x:Name="ZoneInspector" Visibility="Collapsed">
-                            <TextBlock Text="SELECTED MONITOR" Foreground="#65656D" FontSize="10" FontWeight="SemiBold" Margin="2,0,0,10" />
-                            <TextBlock Text="Name" Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="2,0,0,7" />
+                            <TextBlock Text="MONITOR" Foreground="#606068" FontSize="9" FontWeight="SemiBold" Margin="2,0,0,8" />
                             <TextBox x:Name="ZoneNameBox" Style="{StaticResource MuxTextBox}" />
 
-                            <TextBlock Text="Diagonal" Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="2,16,0,7" />
-                            <Grid>
-                                <TextBox x:Name="ZoneSizeBox" Style="{StaticResource MuxTextBox}" Padding="11,9,42,9" />
-                                <TextBlock Text="in" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,13,0" />
+                            <Grid Margin="0,10,0,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="8"/><ColumnDefinition Width="108"/></Grid.ColumnDefinitions>
+                                <Grid>
+                                    <TextBox x:Name="ZoneSizeBox" Style="{StaticResource MuxTextBox}" Padding="11,8,38,8" />
+                                    <TextBlock Text="in" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,12,0" FontSize="11" />
+                                </Grid>
+                                <ComboBox x:Name="ZoneAspectBox" Grid.Column="2" Style="{StaticResource MuxComboBox}">
+                                    <ComboBoxItem Content="16:9" />
+                                    <ComboBoxItem Content="16:10" />
+                                    <ComboBoxItem Content="21:9" />
+                                    <ComboBoxItem Content="32:9" />
+                                    <ComboBoxItem Content="4:3" />
+                                    <ComboBoxItem Content="3:2" />
+                                </ComboBox>
                             </Grid>
 
-                            <TextBlock Text="Aspect ratio" Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="2,16,0,7" />
-                            <ComboBox x:Name="ZoneAspectBox" Style="{StaticResource MuxComboBox}">
-                                <ComboBoxItem Content="16:9" />
-                                <ComboBoxItem Content="16:10" />
-                                <ComboBoxItem Content="21:9" />
-                                <ComboBoxItem Content="32:9" />
-                                <ComboBoxItem Content="4:3" />
-                                <ComboBoxItem Content="3:2" />
-                            </ComboBox>
-
-                            <Grid Margin="0,14,0,0">
-                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="8"/><ColumnDefinition/></Grid.ColumnDefinitions>
-                                <Button Content="Update" Style="{StaticResource MuxButton}" Padding="9,7" Click="UpdateZone_Click" />
-                                <Button Grid.Column="2" Content="Remove" Style="{StaticResource MuxButton}" Padding="9,7" Click="DeleteZone_Click" />
+                            <Grid Margin="0,10,0,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="6"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                                <Button Content="Update" Style="{StaticResource MuxButton}" Padding="8,7" Click="UpdateZone_Click" />
+                                <Button Grid.Column="2" Content="Remove" Style="{StaticResource MuxButton}" Padding="8,7" Click="DeleteZone_Click" />
                             </Grid>
-                            <Border Height="1" Background="#242428" Margin="0,22,0,20" />
+                            <Border Height="1" Background="#242428" Margin="0,18,0,16" />
                         </StackPanel>
 
-                        <TextBlock Text="BEHAVIOR" Foreground="#65656D" FontSize="10" FontWeight="SemiBold" Margin="2,0,0,10" />
-                        <CheckBox x:Name="SnapCheck" Content="Shift-drag snaps to monitor" Style="{StaticResource MuxCheckBox}" Click="BehaviorChanged_Click" />
-                        <CheckBox x:Name="StartupCheck" Content="Launch MUX at sign in" Style="{StaticResource MuxCheckBox}" Margin="0,12,0,0" Click="StartupChanged_Click" />
-
-                        <Border Background="#121214" BorderBrush="#242428" BorderThickness="1" CornerRadius="12" Padding="13" Margin="0,20,0,0">
-                            <StackPanel>
-                                <TextBlock Text="Keyboard" FontSize="12" FontWeight="SemiBold" />
-                                <TextBlock Text="Ctrl + Alt + M   Maximize / restore" Foreground="{StaticResource MutedBrush}" FontSize="10" Margin="0,8,0,0" />
-                                <TextBlock Text="Ctrl + Alt + ←   Previous monitor" Foreground="{StaticResource MutedBrush}" FontSize="10" Margin="0,5,0,0" />
-                                <TextBlock Text="Ctrl + Alt + →   Next monitor" Foreground="{StaticResource MutedBrush}" FontSize="10" Margin="0,5,0,0" />
-                                <TextBlock Text="Ctrl + Alt + E   Edit layout" Foreground="{StaticResource MutedBrush}" FontSize="10" Margin="0,5,0,0" />
-                            </StackPanel>
-                        </Border>
+                        <TextBlock Text="BEHAVIOR" Foreground="#606068" FontSize="9" FontWeight="SemiBold" Margin="2,0,0,8" />
+                        <CheckBox x:Name="SnapCheck" Content="Snap windows to monitors" Style="{StaticResource MuxCheckBox}" Click="BehaviorChanged_Click" />
+                        <CheckBox x:Name="StartupCheck" Content="Launch at sign in" Style="{StaticResource MuxCheckBox}" Margin="0,11,0,0" Click="StartupChanged_Click" />
                     </StackPanel>
                 </ScrollViewer>
             </Border>

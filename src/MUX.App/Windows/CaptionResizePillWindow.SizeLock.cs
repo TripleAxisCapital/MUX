@@ -52,21 +52,20 @@ public partial class CaptionResizePillWindow
             return;
         }
 
-        // Three compact utility buttons now share the right-side control cluster. Keep the
-        // current-size readout usable and expand the base pill only by the amount required for
-        // the new lock control. The caption service still caps the whole pill to the target width.
+        // Keep the original 78-DIP utility footprint so the pill never grows farther right or
+        // becomes clipped on narrow target windows. Three small utility icons share that area.
         controlGrid.ColumnDefinitions.Clear();
-        controlGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(40) });
+        controlGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(30) });
         controlGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2) });
-        controlGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(17) });
+        controlGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(14) });
         controlGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2) });
-        controlGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(17) });
+        controlGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(14) });
         controlGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2) });
-        controlGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(17) });
+        controlGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(14) });
 
         if (CollapsedPanel.ColumnDefinitions.Count > 6)
         {
-            CollapsedPanel.ColumnDefinitions[6].Width = new GridLength(97);
+            CollapsedPanel.ColumnDefinitions[6].Width = new GridLength(78);
         }
 
         var currentSizeBorder = controlGrid.Children
@@ -74,24 +73,25 @@ public partial class CaptionResizePillWindow
             .FirstOrDefault(child => Grid.GetColumn(child) == 0);
         if (currentSizeBorder is not null)
         {
-            currentSizeBorder.Padding = new Thickness(2, 0, 2, 0);
+            currentSizeBorder.Padding = new Thickness(1, 0, 1, 0);
         }
+        CurrentSizeText.FontSize = 8.8;
 
-        MagnetButton.Width = 17;
-        MagnetButton.Padding = new Thickness(1);
+        MagnetButton.Width = 14;
+        MagnetButton.Padding = new Thickness(0);
         Grid.SetColumn(MagnetButton, 2);
 
         if (_edgeCoverButton is not null)
         {
-            _edgeCoverButton.Width = 17;
-            _edgeCoverButton.Padding = new Thickness(1);
+            _edgeCoverButton.Width = 14;
+            _edgeCoverButton.Padding = new Thickness(0);
             Grid.SetColumn(_edgeCoverButton, 4);
         }
 
         _sizeLockGlyph = new Path
         {
-            Width = 14,
-            Height = 14,
+            Width = 12,
+            Height = 12,
             Stretch = Stretch.Uniform,
             Fill = new SolidColorBrush(Color.FromRgb(156, 156, 164)),
             Data = UnlockedGeometry,
@@ -100,17 +100,17 @@ public partial class CaptionResizePillWindow
 
         var glyphViewbox = new Viewbox
         {
-            Width = 14,
-            Height = 14,
+            Width = 12,
+            Height = 12,
             Stretch = Stretch.Uniform,
             Child = _sizeLockGlyph
         };
 
         _sizeLockButton = new Button
         {
-            Width = 17,
+            Width = 14,
             Height = 34,
-            Padding = new Thickness(1),
+            Padding = new Thickness(0),
             ToolTip = "Lock window size",
             Content = glyphViewbox
         };
@@ -118,8 +118,6 @@ public partial class CaptionResizePillWindow
         _sizeLockButton.Click += SizeLockButton_Click;
         Grid.SetColumn(_sizeLockButton, 6);
         controlGrid.Children.Add(_sizeLockButton);
-
-        SetPillWidth(CurrentDesiredWidth(), animate: false);
     }
 
     private void SizeLockButton_Click(object sender, RoutedEventArgs e)

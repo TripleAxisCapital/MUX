@@ -25,10 +25,12 @@ public partial class CaptionResizePillWindow
 
         UpdateMagnetVisual();
         InitializeEdgeCoverControls();
+        InitializeSizeLockControls();
     }
 
     private void MagnetWindow_Closed(object? sender, EventArgs e)
     {
+        DisposeSizeLockControls();
         DisposeEdgeCoverControls();
 
         _magneticSnapService?.Dispose();

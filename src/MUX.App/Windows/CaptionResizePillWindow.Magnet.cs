@@ -17,19 +17,20 @@ public partial class CaptionResizePillWindow
 
     private void MagnetWindow_Loaded(object sender, RoutedEventArgs e)
     {
-        if (_magneticSnapService is not null)
+        if (_magneticSnapService is null)
         {
-            UpdateMagnetVisual();
-            return;
+            _magneticSnappingEnabled = LoadMagneticSnappingEnabled();
+            _magneticSnapService = new MagneticSnapService(_magneticSnappingEnabled);
         }
 
-        _magneticSnappingEnabled = LoadMagneticSnappingEnabled();
-        _magneticSnapService = new MagneticSnapService(_magneticSnappingEnabled);
         UpdateMagnetVisual();
+        InitializeEdgeCoverControls();
     }
 
     private void MagnetWindow_Closed(object? sender, EventArgs e)
     {
+        DisposeEdgeCoverControls();
+
         _magneticSnapService?.Dispose();
         _magneticSnapService = null;
     }

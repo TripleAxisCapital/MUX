@@ -16,6 +16,10 @@ public partial class MainWindow
     private ComboBox? _autoArrangeSizeBox;
     private TextBlock? _autoArrangeStatusText;
     private DispatcherTimer? _autoArrangeStartupTimer;
+    private AutoArrangeCommandBridge? _autoArrangeCommandBridge;
+    private bool _autoArrangeLoadedSeen;
+    private bool _autoArrangeReady;
+    private bool _autoArrangeCommandPending;
 
     public event EventHandler? AutoArrangeSettingsChanged;
 
@@ -23,6 +27,7 @@ public partial class MainWindow
     {
         base.OnSourceInitialized(e);
         InitializeAutoArrangeControls();
+        _autoArrangeCommandBridge ??= AutoArrangeCommandBridge.Attach(this, QueueAutoArrangeCommand);
     }
 
     public double AutoArrangeDiagonalInches
@@ -37,6 +42,7 @@ public partial class MainWindow
 
         _autoArrangeControlsInstalled = true;
         InstallAutoArrangeControls();
+        _autoArrangeCommandPending |= AutoArrangeCommandBootstrap.ConsumeStartupRequest();
         Loaded += MainWindow_AutoArrangeLoaded;
         ContentRendered += MainWindow_AutoArrangeContentRendered;
         Closed += MainWindow_AutoArrangeClosed;
@@ -58,6 +64,23 @@ public partial class MainWindow
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Entry point used by the global hotkey, Stream Deck launcher and cross-process command bridge.
+    /// Commands received during WPF/state startup are held until display calibration has loaded.
+    /// </summary>
+    public void QueueAutoArrangeCommand()
+    {
+        _autoArrangeCommandPending = true;
+
+        if (_autoArrangeReady)
+        {
+            RunPendingAutoArrangeCommand();
+            return;
+        }
+
+        StartAutoArrangeStartupRefresh();
     }
 
     public async Task SetAutoArrangeSizeAsync(double diagonalInches)
@@ -152,9 +175,11 @@ public partial class MainWindow
 
     private void MainWindow_AutoArrangeLoaded(object sender, RoutedEventArgs e)
     {
+        _autoArrangeLoadedSeen = true;
+
         if (_hotkeys is not null)
         {
-            _hotkeys.Register(7, Key.A, () => AutoArrangeCursorDisplay());
+            _hotkeys.Register(7, Key.A, QueueAutoArrangeCommand);
         }
 
         StartAutoArrangeStartupRefresh();
@@ -179,6 +204,9 @@ public partial class MainWindow
             _autoArrangeStartupTimer.Tick -= AutoArrangeStartupTimer_Tick;
             _autoArrangeStartupTimer = null;
         }
+
+        _autoArrangeCommandBridge?.Dispose();
+        _autoArrangeCommandBridge = null;
     }
 
     private void StartAutoArrangeStartupRefresh()
@@ -199,11 +227,14 @@ public partial class MainWindow
 
     private void AutoArrangeStartupTimer_Tick(object? sender, EventArgs e)
     {
-        if (_loading)
+        // MainWindow_Loaded sets _loading before its first await. Requiring that Loaded has actually
+        // run as well prevents an early CLI command from racing ahead of state/display discovery.
+        if (!_autoArrangeLoadedSeen || _loading)
         {
             return;
         }
 
+        _autoArrangeReady = true;
         RefreshAutoArrangeSizeUi();
         if (_hotkeys is not null)
         {
@@ -225,6 +256,21 @@ public partial class MainWindow
         catch
         {
         }
+
+        RunPendingAutoArrangeCommand();
+    }
+
+    private void RunPendingAutoArrangeCommand()
+    {
+        if (!_autoArrangeReady || !_autoArrangeCommandPending)
+        {
+            return;
+        }
+
+        _autoArrangeCommandPending = false;
+        Dispatcher.BeginInvoke(
+            DispatcherPriority.ApplicationIdle,
+            new Action(() => AutoArrangeCursorDisplay(showFeedback: false)));
     }
 
     private async void AutoArrangeSizeBox_SelectionChanged(object sender, SelectionChangedEventArgs e)

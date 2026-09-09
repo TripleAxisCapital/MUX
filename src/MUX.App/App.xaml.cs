@@ -3,6 +3,7 @@ using System.Drawing;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Media.Imaging;
+using MUX.App.Services;
 using Forms = System.Windows.Forms;
 
 namespace MUX.App;
@@ -15,6 +16,7 @@ public partial class App : Application
     private Forms.ToolStripMenuItem? _predefinedAreasMenuItem;
     private MainWindow? _mainWindow;
     private Icon? _muxIcon;
+    private StreamDeckCommandInbox? _streamDeckCommandInbox;
     private bool _isExiting;
 
     public App()
@@ -41,6 +43,18 @@ public partial class App : Application
         _mainWindow.InitializeFeatureControls();
         _mainWindow.InitializePhantomWindows();
         _mainWindow.InitializeFreeformControls();
+
+        // Keep the legacy Win32 bridges for compatibility with explicit CLI commands, but make
+        // sure the black-bars bridge is actually attached. Stream Deck itself uses the more robust
+        // LocalAppData command inbox below and therefore does not depend on a visible HWND.
+        _mainWindow.InitializeBlackBarsCommandBridge();
+
+        _streamDeckCommandInbox = new StreamDeckCommandInbox(
+            _mainWindow.Dispatcher,
+            _mainWindow.QueueAutoArrangeCommand,
+            () => _mainWindow.ToggleAllBlackBars());
+        _streamDeckCommandInbox.Start();
+
         _mainWindow.PredefinedAreasEnabledChanged += MainWindow_PredefinedAreasEnabledChanged;
         _mainWindow.Show();
 
@@ -69,6 +83,8 @@ public partial class App : Application
     public void Quit()
     {
         _isExiting = true;
+        _streamDeckCommandInbox?.Dispose();
+        _streamDeckCommandInbox = null;
         _trayIcon?.Dispose();
         _trayIcon = null;
         _predefinedAreasMenuItem = null;
@@ -80,6 +96,8 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _streamDeckCommandInbox?.Dispose();
+        _streamDeckCommandInbox = null;
         _trayIcon?.Dispose();
         _muxIcon?.Dispose();
         base.OnExit(e);

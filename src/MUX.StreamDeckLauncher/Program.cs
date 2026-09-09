@@ -1,20 +1,14 @@
 using System;
 using System.Diagnostics;
 using System.IO;
-using System.Runtime.InteropServices;
-using System.Text;
 using System.Threading;
 
 namespace MUX.StreamDeckLauncher;
 
 internal static class Program
 {
-    private const string AutoArrangeMessageName = "MUX.Standard.AutoArrange.CursorDisplay.v1";
-    private const string BlackBarsMessageName = "MUX.Standard.BlackBars.Toggle.v1";
-    private const ulong AutoArrangeAck = 0x4D555841; // MUXA
-    private const ulong BlackBarsAck = 0x4D555842;   // MUXB
-    private const uint SmtoBlock = 0x0001;
-    private const uint SmtoAbortIfHung = 0x0002;
+    private const string AutoArrangeCommand = "auto-arrange";
+    private const string ToggleBlackBarsCommand = "toggle-black-bars";
 
     private enum Command
     {
@@ -34,43 +28,62 @@ internal static class Program
                 return 2;
             }
 
-            if (TrySignal(command))
+            var commandText = command == Command.AutoArrange
+                ? AutoArrangeCommand
+                : ToggleBlackBarsCommand;
+
+            var root = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "MUX",
+                "StreamDeckCommands");
+            Directory.CreateDirectory(root);
+
+            var id = $"{DateTime.UtcNow:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}";
+            var commandPath = Path.Combine(root, id + ".cmd");
+            var acknowledgementPath = Path.Combine(root, id + ".ack");
+            var tempPath = commandPath + $".tmp-{Environment.ProcessId}";
+
+            File.WriteAllText(tempPath, commandText);
+            File.Move(tempPath, commandPath);
+
+            // A running current MUX normally acknowledges in under 100 ms. Giving it a few seconds
+            // first avoids launching a duplicate application just because the UI thread was busy.
+            if (WaitForAcknowledgement(acknowledgementPath, 3000))
             {
+                SafeDelete(acknowledgementPath);
                 return 0;
             }
 
             var muxPath = Path.Combine(AppContext.BaseDirectory, "MUX.exe");
             if (!File.Exists(muxPath))
             {
+                WriteFailureLog(commandText, "MUX.exe is not beside the launcher.");
                 return 3;
             }
 
-            var argument = command == Command.AutoArrange
-                ? "--auto-arrange --background"
-                : "--toggle-black-bars --background";
-
+            // If no compatible resident MUX consumed the command, launch the Standard executable
+            // from the same package. Its normal startup retires stale older copies and immediately
+            // begins draining this same inbox.
             Process.Start(new ProcessStartInfo
             {
                 FileName = muxPath,
-                Arguments = argument,
+                Arguments = "--background",
                 UseShellExecute = true,
                 WorkingDirectory = AppContext.BaseDirectory
             });
 
-            // Wait for the resident MUX window/message hook to exist, then hand the command over.
-            for (var attempt = 0; attempt < 40; attempt++)
+            if (WaitForAcknowledgement(acknowledgementPath, 12000))
             {
-                Thread.Sleep(150);
-                if (TrySignal(command))
-                {
-                    return 0;
-                }
+                SafeDelete(acknowledgementPath);
+                return 0;
             }
 
+            WriteFailureLog(commandText, "MUX did not acknowledge the command within 15 seconds.");
             return 4;
         }
-        catch
+        catch (Exception exception)
         {
+            WriteFailureLog("unknown", $"{exception.GetType().Name}: {exception.Message}");
             return 5;
         }
     }
@@ -105,85 +118,57 @@ internal static class Program
         return Command.None;
     }
 
-    private static bool TrySignal(Command command)
+    private static bool WaitForAcknowledgement(string path, int timeoutMilliseconds)
     {
-        var messageName = command == Command.AutoArrange ? AutoArrangeMessageName : BlackBarsMessageName;
-        var expectedAck = command == Command.AutoArrange ? AutoArrangeAck : BlackBarsAck;
-        var message = RegisterWindowMessage(messageName);
-        if (message == 0)
+        var started = Stopwatch.StartNew();
+        while (started.ElapsedMilliseconds < timeoutMilliseconds)
         {
-            return false;
-        }
-
-        var delivered = false;
-        EnumWindows((hwnd, _) =>
-        {
-            if (delivered)
-            {
-                return false;
-            }
-
             try
             {
-                var length = GetWindowTextLength(hwnd);
-                if (length <= 0)
+                if (File.Exists(path))
                 {
-                    return true;
-                }
-
-                var title = new StringBuilder(length + 1);
-                _ = GetWindowText(hwnd, title, title.Capacity);
-                if (!title.ToString().Equals("MUX", StringComparison.Ordinal))
-                {
-                    return true;
-                }
-
-                if (SendMessageTimeout(
-                        hwnd,
-                        message,
-                        IntPtr.Zero,
-                        IntPtr.Zero,
-                        SmtoBlock | SmtoAbortIfHung,
-                        1200,
-                        out var result) != IntPtr.Zero &&
-                    result.ToUInt64() == expectedAck)
-                {
-                    delivered = true;
-                    return false;
+                    var value = File.ReadAllText(path).Trim();
+                    return value.Equals("OK", StringComparison.OrdinalIgnoreCase);
                 }
             }
             catch
             {
             }
 
-            return true;
-        }, IntPtr.Zero);
+            Thread.Sleep(50);
+        }
 
-        return delivered;
+        return false;
     }
 
-    private delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
+    private static void WriteFailureLog(string command, string message)
+    {
+        try
+        {
+            var root = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "MUX");
+            Directory.CreateDirectory(root);
+            File.AppendAllText(
+                Path.Combine(root, "streamdeck-launcher.log"),
+                $"[{DateTimeOffset.Now:O}] {command}: {message}{Environment.NewLine}");
+        }
+        catch
+        {
+        }
+    }
 
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    private static extern uint RegisterWindowMessage(string message);
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
-
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    private static extern int GetWindowTextLength(IntPtr hwnd);
-
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    private static extern int GetWindowText(IntPtr hwnd, StringBuilder text, int maxCount);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern IntPtr SendMessageTimeout(
-        IntPtr hwnd,
-        uint message,
-        IntPtr wParam,
-        IntPtr lParam,
-        uint flags,
-        uint timeout,
-        out UIntPtr result);
+    private static void SafeDelete(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch
+        {
+        }
+    }
 }

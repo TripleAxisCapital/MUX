@@ -22,4 +22,19 @@
     <Resource Include="Assets\mux-logo.png" />
     <ProjectReference Include="..\MUX.Core\MUX.Core.csproj" />
   </ItemGroup>
+
+  <!-- Every published Standard package gets two genuine NativeAOT Stream Deck helpers. -->
+  <Target Name="PublishStreamDeckLaunchers" AfterTargets="Publish" Condition="'$(RuntimeIdentifier)' == 'win-x64'">
+    <PropertyGroup>
+      <_StreamDeckPublishDir>$(PublishDir)streamdeck-launcher\</_StreamDeckPublishDir>
+    </PropertyGroup>
+    <MSBuild Projects="..\MUX.StreamDeckLauncher\MUX.StreamDeckLauncher.csproj"
+             Targets="Restore;Publish"
+             Properties="Configuration=$(Configuration);RuntimeIdentifier=win-x64;SelfContained=true;PublishDir=$(_StreamDeckPublishDir)" />
+    <Copy SourceFiles="$(_StreamDeckPublishDir)MUX-StreamDeckLauncher.exe"
+          DestinationFiles="$(PublishDir)MUX-AutoArrange.exe" />
+    <Copy SourceFiles="$(_StreamDeckPublishDir)MUX-StreamDeckLauncher.exe"
+          DestinationFiles="$(PublishDir)MUX-BlackBars.exe" />
+    <RemoveDir Directories="$(_StreamDeckPublishDir)" />
+  </Target>
 </Project>

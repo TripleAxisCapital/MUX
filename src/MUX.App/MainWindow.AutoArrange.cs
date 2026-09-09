@@ -28,6 +28,7 @@ public partial class MainWindow
         base.OnSourceInitialized(e);
         InitializeAutoArrangeControls();
         _autoArrangeCommandBridge ??= AutoArrangeCommandBridge.Attach(this, QueueAutoArrangeCommand);
+        InitializeBlackBarsCommandBridge();
     }
 
     public double AutoArrangeDiagonalInches

@@ -17,6 +17,9 @@ public partial class CaptionResizePillWindow
     private void InitializeAutoArrangeControls()
     {
         EnsureAutoArrangeButton();
+        // Auto Arrange is initialized last, so this is the single authoritative pass that lays out
+        // every optional utility control at a usable size instead of progressively squeezing them.
+        NormalizeUtilityClusterLayout();
         AttachAutoArrangeHost();
         UpdateAutoArrangeVisual();
     }
@@ -174,6 +177,8 @@ public partial class CaptionResizePillWindow
 
     private void DisposeAutoArrangeControls()
     {
+        DisposeUtilityClusterLayout();
+
         if (_autoArrangeHost is not null)
         {
             try { _autoArrangeHost.AutoArrangeSettingsChanged -= AutoArrangeHost_SettingsChanged; } catch { }

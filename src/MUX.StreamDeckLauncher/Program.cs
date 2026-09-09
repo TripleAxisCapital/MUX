@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Threading;
 
 namespace MUX.StreamDeckLauncher;
@@ -9,6 +10,8 @@ internal static class Program
 {
     private const string AutoArrangeCommand = "auto-arrange";
     private const string ToggleBlackBarsCommand = "toggle-black-bars";
+    private const uint MbOk = 0x00000000;
+    private const uint MbIconInformation = 0x00000040;
 
     private enum Command
     {
@@ -16,6 +19,8 @@ internal static class Program
         AutoArrange,
         ToggleBlackBars
     }
+
+    private readonly record struct Acknowledgement(bool Received, bool Success, string Message);
 
     [STAThread]
     private static int Main(string[] args)
@@ -46,24 +51,25 @@ internal static class Program
             File.WriteAllText(tempPath, commandText);
             File.Move(tempPath, commandPath);
 
-            // A running current MUX normally acknowledges in under 100 ms. Giving it a few seconds
-            // first avoids launching a duplicate application just because the UI thread was busy.
-            if (WaitForAcknowledgement(acknowledgementPath, 3000))
+            // A running current MUX normally acknowledges in under 100 ms. The acknowledgement now
+            // represents the result of the real operation, not merely that Auto Arrange was queued.
+            var acknowledgement = WaitForAcknowledgement(acknowledgementPath, 3000);
+            if (acknowledgement.Received)
             {
                 SafeDelete(acknowledgementPath);
-                return 0;
+                return Complete(command, acknowledgement);
             }
 
             var muxPath = Path.Combine(AppContext.BaseDirectory, "MUX.exe");
             if (!File.Exists(muxPath))
             {
                 WriteFailureLog(commandText, "MUX.exe is not beside the launcher.");
+                ShowFailure(command, "MUX.exe is not beside this Stream Deck launcher.");
                 return 3;
             }
 
-            // If no compatible resident MUX consumed the command, launch the Standard executable
-            // from the same package. Its normal startup retires stale older copies and immediately
-            // begins draining this same inbox.
+            // If no compatible resident MUX consumed the command, launch Standard from the same
+            // package. Its command inbox will pick up the already-written request after startup.
             Process.Start(new ProcessStartInfo
             {
                 FileName = muxPath,
@@ -72,20 +78,36 @@ internal static class Program
                 WorkingDirectory = AppContext.BaseDirectory
             });
 
-            if (WaitForAcknowledgement(acknowledgementPath, 12000))
+            acknowledgement = WaitForAcknowledgement(acknowledgementPath, 12000);
+            if (acknowledgement.Received)
             {
                 SafeDelete(acknowledgementPath);
-                return 0;
+                return Complete(command, acknowledgement);
             }
 
             WriteFailureLog(commandText, "MUX did not acknowledge the command within 15 seconds.");
+            ShowFailure(command, "MUX did not acknowledge the command. Make sure the new MUX.exe from this same folder is running.");
             return 4;
         }
         catch (Exception exception)
         {
             WriteFailureLog("unknown", $"{exception.GetType().Name}: {exception.Message}");
+            ShowFailure(Command.None, $"MUX Stream Deck launcher failed: {exception.Message}");
             return 5;
         }
+    }
+
+    private static int Complete(Command command, Acknowledgement acknowledgement)
+    {
+        if (acknowledgement.Success)
+        {
+            return 0;
+        }
+
+        var commandText = command == Command.AutoArrange ? AutoArrangeCommand : ToggleBlackBarsCommand;
+        WriteFailureLog(commandText, acknowledgement.Message);
+        ShowFailure(command, acknowledgement.Message);
+        return 6;
     }
 
     private static Command ResolveCommand(string[] args)
@@ -118,7 +140,7 @@ internal static class Program
         return Command.None;
     }
 
-    private static bool WaitForAcknowledgement(string path, int timeoutMilliseconds)
+    private static Acknowledgement WaitForAcknowledgement(string path, int timeoutMilliseconds)
     {
         var started = Stopwatch.StartNew();
         while (started.ElapsedMilliseconds < timeoutMilliseconds)
@@ -128,7 +150,21 @@ internal static class Program
                 if (File.Exists(path))
                 {
                     var value = File.ReadAllText(path).Trim();
-                    return value.Equals("OK", StringComparison.OrdinalIgnoreCase);
+                    if (value.StartsWith("OK", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return new Acknowledgement(true, true, ExtractMessage(value, "OK"));
+                    }
+
+                    if (value.StartsWith("ERROR", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return new Acknowledgement(true, false, ExtractMessage(value, "ERROR"));
+                    }
+
+                    // Backward compatibility with the first inbox build, which wrote plain "OK".
+                    if (value.Equals("OK", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return new Acknowledgement(true, true, string.Empty);
+                    }
                 }
             }
             catch
@@ -138,7 +174,45 @@ internal static class Program
             Thread.Sleep(50);
         }
 
-        return false;
+        return new Acknowledgement(false, false, string.Empty);
+    }
+
+    private static string ExtractMessage(string value, string prefix)
+    {
+        if (value.Length <= prefix.Length)
+        {
+            return prefix.Equals("ERROR", StringComparison.OrdinalIgnoreCase)
+                ? "MUX could not complete the command."
+                : string.Empty;
+        }
+
+        var message = value[prefix.Length..].TrimStart('|', ':', ' ');
+        return string.IsNullOrWhiteSpace(message)
+            ? "MUX could not complete the command."
+            : message;
+    }
+
+    private static void ShowFailure(Command command, string message)
+    {
+        try
+        {
+            // GitHub Actions has no person to dismiss a dialog. On a real desktop this makes a
+            // failed Stream Deck press self-explanatory instead of appearing to do nothing.
+            if (string.Equals(Environment.GetEnvironmentVariable("CI"), "true", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            var title = command == Command.AutoArrange
+                ? "MUX Auto Arrange"
+                : command == Command.ToggleBlackBars
+                    ? "MUX Black Bars"
+                    : "MUX Stream Deck";
+            _ = MessageBox(IntPtr.Zero, message, title, MbOk | MbIconInformation);
+        }
+        catch
+        {
+        }
     }
 
     private static void WriteFailureLog(string command, string message)
@@ -171,4 +245,7 @@ internal static class Program
         {
         }
     }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "MessageBoxW")]
+    private static extern int MessageBox(IntPtr hwnd, string text, string caption, uint type);
 }

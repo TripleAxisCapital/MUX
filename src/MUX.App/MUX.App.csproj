@@ -22,16 +22,4 @@
     <Resource Include="Assets\mux-logo.png" />
     <ProjectReference Include="..\MUX.Core\MUX.Core.csproj" />
   </ItemGroup>
-
-  <!--
-    Stream Deck's simple Open action does not expose command-line arguments consistently across
-    profiles/plugins. The published single-file MUX binary is therefore copied to a dedicated
-    launcher name. AutoArrangeCommandBootstrap recognizes that filename, signals the resident MUX
-    process, then exits. If MUX is not running yet it starts the canonical MUX.exe in background.
-  -->
-  <Target Name="CreateAutoArrangeLauncherAlias" AfterTargets="Publish">
-    <Copy SourceFiles="$(PublishDir)MUX.exe"
-          DestinationFiles="$(PublishDir)MUX-AutoArrange.exe"
-          Condition="Exists('$(PublishDir)MUX.exe')" />
-  </Target>
 </Project>

@@ -131,51 +131,111 @@ public sealed class StreamDeckCommandInbox : IDisposable
             return;
         }
 
-        var acknowledged = false;
+        var keepClaimedFile = false;
         try
         {
             var command = File.ReadAllText(claimedPath, Encoding.UTF8).Trim();
             switch (command.ToLowerInvariant())
             {
                 case AutoArrangeCommand:
-                    _autoArrange();
-                    acknowledged = true;
+                {
+                    var result = ExecuteAutoArrangeNow();
+                    if (result is null)
+                    {
+                        // During startup the main window can exist before its state/display discovery
+                        // has completed. Put the command back and let the next 75 ms tick retry it.
+                        keepClaimedFile = TryReturnToInbox(claimedPath, path);
+                        return;
+                    }
+
+                    var payload = result.Value.Success
+                        ? "OK|" + OneLine(result.Value.Message)
+                        : "ERROR|" + OneLine(result.Value.Message);
+                    WriteAcknowledgement(id, payload);
+                    AppendLog($"executed {id} {command} => {payload}");
                     break;
+                }
 
                 case ToggleBlackBarsCommand:
                     _toggleBlackBars();
-                    acknowledged = true;
+                    WriteAcknowledgement(id, "OK|Black bars toggled.");
+                    AppendLog($"executed {id} {command} => OK");
                     break;
 
                 default:
+                    WriteAcknowledgement(id, "ERROR|Unknown MUX Stream Deck command.");
                     AppendLog($"ignored {id} unknown command '{command}'");
                     break;
-            }
-
-            if (acknowledged)
-            {
-                WriteAcknowledgement(id);
-                AppendLog($"executed {id} {command}");
             }
         }
         catch (Exception exception)
         {
+            WriteAcknowledgement(id, $"ERROR|{OneLine(exception.Message)}");
             AppendLog($"failed {id} {exception.GetType().Name}: {exception.Message}");
         }
         finally
         {
-            SafeDelete(claimedPath);
+            if (!keepClaimedFile)
+            {
+                SafeDelete(claimedPath);
+            }
         }
     }
 
-    private void WriteAcknowledgement(string id)
+    /// <summary>
+    /// Stream Deck must receive the result of the actual arrange operation, not merely an ACK that
+    /// the operation was queued. The Action supplied by App is the MainWindow method group, so its
+    /// Target is the resident MainWindow. Calling AutoArrangeCursorDisplay here executes on the UI
+    /// dispatcher and returns the real success/failure result synchronously.
+    /// </summary>
+    private AutoArrangeResult? ExecuteAutoArrangeNow()
+    {
+        if (_autoArrange.Target is global::MUX.App.MainWindow mainWindow)
+        {
+            var result = mainWindow.AutoArrangeCursorDisplay(showFeedback: false);
+
+            // This specific failure is transient while the app is loading its saved state and
+            // discovering displays. Defer rather than incorrectly telling Stream Deck it failed.
+            if (!result.Success &&
+                result.Message.Contains("has not detected a physical display yet", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            return result;
+        }
+
+        // Defensive compatibility fallback. Current MUX always supplies MainWindow.QueueAutoArrangeCommand.
+        _autoArrange();
+        return AutoArrangeResult.Ok(0, string.Empty, 0, "Auto Arrange command was queued.");
+    }
+
+    private static bool TryReturnToInbox(string claimedPath, string originalPath)
+    {
+        try
+        {
+            if (File.Exists(originalPath))
+            {
+                return false;
+            }
+
+            File.Move(claimedPath, originalPath);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private void WriteAcknowledgement(string id, string payload)
     {
         var finalPath = Path.Combine(_commandRoot, id + ".ack");
         var tempPath = finalPath + $".tmp-{Environment.ProcessId}";
 
         try
         {
-            File.WriteAllText(tempPath, "OK", Encoding.ASCII);
+            File.WriteAllText(tempPath, payload, Encoding.UTF8);
             File.Move(tempPath, finalPath, overwrite: true);
         }
         finally
@@ -222,6 +282,11 @@ public sealed class StreamDeckCommandInbox : IDisposable
         {
         }
     }
+
+    private static string OneLine(string? value)
+        => string.IsNullOrWhiteSpace(value)
+            ? "MUX could not complete the command."
+            : value.Replace('\r', ' ').Replace('\n', ' ').Trim();
 
     private static void SafeDelete(string path)
     {

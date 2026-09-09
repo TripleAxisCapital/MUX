@@ -70,20 +70,37 @@ jobs:
             throw "MUX Standard exited during startup with exit code $($process.ExitCode)."
           }
 
-          function Test-Launcher([string]$path, [string]$name) {
+          function Test-Launcher([string]$path, [string]$name, [int[]]$allowedExitCodes) {
             $child = Start-Process -FilePath $path -PassThru
-            if (-not $child.WaitForExit(7000)) {
+            if (-not $child.WaitForExit(16000)) {
               Stop-Process -Id $child.Id -Force -ErrorAction SilentlyContinue
               throw "$name did not return after handing off its command."
             }
-            if ($child.ExitCode -ne 0) {
-              throw "$name exited with code $($child.ExitCode)."
+            if ($allowedExitCodes -notcontains $child.ExitCode) {
+              throw "$name exited with unexpected code $($child.ExitCode)."
             }
+            Write-Host "$name returned expected code $($child.ExitCode)."
           }
 
-          Test-Launcher $autoLauncher "MUX-AutoArrange.exe"
-          Test-Launcher $barsLauncher "MUX-BlackBars.exe"
-          Test-Launcher $barsLauncher "MUX-BlackBars.exe second toggle"
+          # On a headless CI desktop there may be no eligible normal window to arrange. Exit code 6
+          # is therefore valid here: it proves the launcher received the real Auto Arrange result
+          # instead of incorrectly ACKing a queued command. On a user's desktop, that same result is
+          # shown as an explanatory MUX Auto Arrange dialog.
+          Test-Launcher $autoLauncher "MUX-AutoArrange.exe" @(0, 6)
+          Test-Launcher $barsLauncher "MUX-BlackBars.exe" @(0)
+          Test-Launcher $barsLauncher "MUX-BlackBars.exe second toggle" @(0)
+
+          $commandLog = Join-Path $env:LOCALAPPDATA "MUX/streamdeck-command.log"
+          if (-not (Test-Path $commandLog)) {
+            throw "MUX did not create the Stream Deck command execution log."
+          }
+          $commandLogText = Get-Content $commandLog -Raw
+          if ($commandLogText -notmatch "auto-arrange => (OK|ERROR)") {
+            throw "Auto Arrange did not record a real execution outcome."
+          }
+          if ($commandLogText -notmatch "toggle-black-bars => OK") {
+            throw "Black Bars did not record a successful execution outcome."
+          }
 
           foreach ($arguments in @("--auto-arrange", "--toggle-black-bars")) {
             $child = Start-Process -FilePath $exe -ArgumentList $arguments -PassThru
@@ -102,7 +119,7 @@ jobs:
           }
 
           Stop-Process -Id $process.Id -Force
-          Write-Host "Both dedicated Stream Deck launchers and both CLI command bridges passed."
+          Write-Host "Dedicated Stream Deck launchers returned real command outcomes and the resident MUX process stayed alive."
 
       - name: Package Standard
         shell: pwsh

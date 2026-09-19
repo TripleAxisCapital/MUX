@@ -25,6 +25,7 @@ OutputDir={#OutputDir}
 OutputBaseFilename=MUX-Virtual-Setup-x64
 SetupIconFile={#SetupIconPath}
 UninstallDisplayIcon={app}\{#MyAppExeName}
+UninstallDisplayName={#MyAppName}
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern

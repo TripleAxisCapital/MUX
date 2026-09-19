@@ -125,10 +125,40 @@ jobs:
         shell: pwsh
         run: Compress-Archive -Path artifacts/MUX/* -DestinationPath artifacts/MUX-win-x64.zip -CompressionLevel Optimal
 
+      - name: Install Inno Setup compiler
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+
+      - name: Build Windows installer
+        shell: pwsh
+        run: ./scripts/build-installer.ps1 -Edition Standard -SourceDir artifacts/MUX -OutputDir artifacts/installers
+
+      - name: Installer registration smoke test
+        shell: pwsh
+        run: |
+          $setup = Join-Path $PWD "artifacts/installers/MUX-Standard-Setup-x64.exe"
+          $installDir = Join-Path $env:RUNNER_TEMP "MUX-Installer-Smoke"
+          $process = Start-Process -FilePath $setup -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=`"$installDir`"" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "MUX installer exited with $($process.ExitCode)." }
+          if (-not (Test-Path (Join-Path $installDir "MUX.exe"))) { throw "Installed MUX.exe was not found." }
+
+          $entry = Get-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*" -ErrorAction SilentlyContinue |
+            Where-Object { $_.DisplayName -eq "MUX" } |
+            Select-Object -First 1
+          if (-not $entry) { throw "MUX was not registered in Windows Installed Apps." }
+          if (-not $entry.UninstallString) { throw "MUX uninstall registration is missing its uninstaller." }
+
+          $uninstaller = Join-Path $installDir "unins000.exe"
+          if (-not (Test-Path $uninstaller)) { throw "MUX uninstaller was not installed." }
+          $uninstall = Start-Process -FilePath $uninstaller -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART" -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) { throw "MUX uninstaller exited with $($uninstall.ExitCode)." }
+
       - uses: actions/upload-artifact@v4
         with:
           name: MUX-Standard-rolling
-          path: artifacts/MUX-win-x64.zip
+          path: |
+            artifacts/MUX-win-x64.zip
+            artifacts/installers/MUX-Standard-Setup-x64.exe
           if-no-files-found: error
 
   publish-standard:
@@ -151,11 +181,13 @@ jobs:
           if gh release view latest-build --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload latest-build \
               release-assets/MUX-win-x64.zip \
+              release-assets/MUX-Standard-Setup-x64.exe \
               --repo "$GITHUB_REPOSITORY" \
               --clobber
           else
             gh release create latest-build \
               release-assets/MUX-win-x64.zip \
+              release-assets/MUX-Standard-Setup-x64.exe \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --title "MUX Latest Windows Builds" \

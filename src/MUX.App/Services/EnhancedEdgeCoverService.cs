@@ -516,6 +516,8 @@ public sealed class EnhancedEdgeCoverService : IDisposable
         private int _dragStartThickness;
         private bool _shown;
         private bool _positioned;
+        private bool _topBarRevealed = true;
+        private DateTime _lastTopHoverUtc = DateTime.MinValue;
         private NativeRect _lastPositioned;
         private bool _disposed;
 
@@ -679,12 +681,18 @@ public sealed class EnhancedEdgeCoverService : IDisposable
             _targetRect = targetRect;
             _thickness = Math.Max(1, thickness);
             _dpi = Math.Max(96u, dpi);
-            _grabRadius = ScaleForDpi(12, _dpi);
-            _hoverRadius = ScaleForDpi(22, _dpi);
+            // The top-edge grip needs a larger hit area than the side grips,
+            // particularly at the minimum 4-DIP black-bar thickness.
+            _grabRadius = ScaleForDpi(_side == EdgeSide.Top ? 19 : 12, _dpi);
+            _hoverRadius = ScaleForDpi(_side == EdgeSide.Top ? 30 : 22, _dpi);
             _overlayRect = CalculateOverlayRect(targetRect, _thickness, _hoverRadius, _side);
 
             EnsureShownAndPositioned();
             DrawCover();
+            if (_side == EdgeSide.Top)
+            {
+                UpdateTopBarReveal(cursor);
+            }
             DrawHandle(cursor);
         }
 
@@ -751,6 +759,67 @@ public sealed class EnhancedEdgeCoverService : IDisposable
             }
         }
 
+        private void UpdateTopBarReveal(NativePoint? cursor)
+        {
+            var now = DateTime.UtcNow;
+            if (_dragging)
+            {
+                // Never animate the cover away while its thickness is being adjusted.
+                _lastTopHoverUtc = DateTime.MinValue;
+                SetTopBarRevealed(true);
+                return;
+            }
+
+            if (cursor is NativePoint point)
+            {
+                // A separate grip lives at the inner edge, away from the middle
+                // of the title bar. Hovering it takes precedence over unveiling
+                // the caption so the top bar can still be resized.
+                var nearGrip = IsInteractivePoint(point);
+                if (nearGrip)
+                {
+                    _lastTopHoverUtc = DateTime.MinValue;
+                    SetTopBarRevealed(true);
+                    return;
+                }
+
+                var approach = ScaleForDpi(22, _dpi);
+                var titleBand = Math.Max(ScaleForDpi(54, _dpi), _thickness + approach);
+                if (point.X >= _targetRect.Left && point.X < _targetRect.Right &&
+                    point.Y >= _targetRect.Top - approach &&
+                    point.Y <= Math.Min(_targetRect.Bottom, _targetRect.Top + titleBand))
+                {
+                    _lastTopHoverUtc = now;
+                    SetTopBarRevealed(false);
+                    return;
+                }
+            }
+
+            // A short exit delay prevents flicker when crossing the cover edge
+            // or moving from the caption into a native/custom caption button.
+            if (now - _lastTopHoverUtc >= TimeSpan.FromMilliseconds(290))
+            {
+                SetTopBarRevealed(true);
+            }
+        }
+
+        private void SetTopBarRevealed(bool revealed)
+        {
+            if (_topBarRevealed == revealed)
+            {
+                return;
+            }
+
+            _topBarRevealed = revealed;
+            _cover.BeginAnimation(OpacityProperty,
+                new DoubleAnimation(_cover.Opacity, revealed ? 1.0 : 0.0,
+                    TimeSpan.FromMilliseconds(revealed ? 160 : 115))
+                {
+                    EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+                },
+                HandoffBehavior.SnapshotAndReplace);
+        }
+
         private void DrawHandle(NativePoint? cursor)
         {
             if (cursor is null)
@@ -773,6 +842,11 @@ public sealed class EnhancedEdgeCoverService : IDisposable
                 ? Math.Abs(point.X - handleCenter) <= ScaleForDpi(50, _dpi)
                 : Math.Abs(point.Y - handleCenter) <= ScaleForDpi(50, _dpi);
             var hot = _dragging || (along && nearHandle && distance <= _hoverRadius);
+            if (_side == EdgeSide.Top && !hot && !_topBarRevealed)
+            {
+                SetHot(false);
+                return;
+            }
             SetHot(hot);
             if (!hot)
             {
@@ -926,6 +1000,10 @@ public sealed class EnhancedEdgeCoverService : IDisposable
 
             EndDrag();
             SetInputTransparent(true);
+            _cover.BeginAnimation(OpacityProperty, null);
+            _cover.Opacity = 1;
+            _topBarRevealed = true;
+            _lastTopHoverUtc = DateTime.MinValue;
             _hot = false;
             _handle.BeginAnimation(OpacityProperty, null);
             _handle.Opacity = 0;

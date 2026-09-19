@@ -141,6 +141,7 @@ public sealed class CaptionResizePillService : IDisposable
         }
 
         var now = DateTime.UtcNow;
+        _pill.RefreshAdvancedActionsHover(now);
 
         if (_pill.IsVisible && (_pill.IsMouseOver || _pill.IsInteractionLocked))
         {

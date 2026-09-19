@@ -1,7 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
-using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
 
@@ -22,6 +21,7 @@ public partial class CaptionResizePillWindow
     private double _utilityClusterWidth = LegacyUtilityWidth;
     private Button? _moreButton;
     private Popup? _utilityPopup;
+    private DateTime _lastAdvancedHoverUtc = DateTime.MinValue;
 
     private void NormalizeUtilityClusterLayout()
     {
@@ -157,7 +157,8 @@ public partial class CaptionResizePillWindow
             Placement = PlacementMode.Bottom,
             VerticalOffset = 9,
             AllowsTransparency = true,
-            StaysOpen = false,
+            // Do not capture or discard clicks intended for the underlying application.
+            StaysOpen = true,
             Child = new Border
             {
                 Background = new SolidColorBrush(Color.FromRgb(26, 26, 30)),
@@ -178,25 +179,25 @@ public partial class CaptionResizePillWindow
 
         // StaysOpen=false may dismiss the popup before Button.Click; handle a
         // second click explicitly so the More button reliably closes the panel.
-        _moreButton.PreviewMouseLeftButtonDown += MoreButton_PreviewMouseLeftButtonDown;
         _moreButton.Click += MoreButton_Click;
-    }
-
-    private void MoreButton_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-    {
-        if (_utilityPopup?.IsOpen == true)
-        {
-            _utilityPopup.IsOpen = false;
-            e.Handled = true;
-        }
     }
 
     private void MoreButton_Click(object sender, RoutedEventArgs e)
     {
         if (_utilityPopup is not null)
         {
-            _utilityPopup.IsOpen = true;
+            _utilityPopup.IsOpen = !_utilityPopup.IsOpen;
+            _lastAdvancedHoverUtc = DateTime.UtcNow;
         }
+    }
+
+    public void RefreshAdvancedActionsHover(DateTime now)
+    {
+        if (_utilityPopup?.IsOpen != true) return;
+        if (_utilityPopup.IsMouseOver || IsMouseOver || _moreButton?.IsMouseOver == true)
+            _lastAdvancedHoverUtc = now;
+        else if (now - _lastAdvancedHoverUtc >= TimeSpan.FromMilliseconds(240))
+            _utilityPopup.IsOpen = false;
     }
 
     private void UtilityLayout_LayoutModeChanged(object? sender, EventArgs e)
@@ -238,7 +239,6 @@ public partial class CaptionResizePillWindow
         _utilityPopup?.SetCurrentValue(Popup.IsOpenProperty, false);
         if (_moreButton is not null)
         {
-            _moreButton.PreviewMouseLeftButtonDown -= MoreButton_PreviewMouseLeftButtonDown;
             _moreButton.Click -= MoreButton_Click;
         }
         _utilityPopup = null;

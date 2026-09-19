@@ -897,7 +897,7 @@ public sealed class EnhancedEdgeCoverService : IDisposable
                 ? Math.Abs(point.X - handleCenter) <= ScaleForDpi(50, _dpi)
                 : Math.Abs(point.Y - handleCenter) <= ScaleForDpi(50, _dpi);
             var hot = _dragging || (_side == EdgeSide.Top
-                ? _topBarRevealed && IsTopGripHover(point)
+                ? _topBarRevealed && IsTopGripHit(point)
                 : along && nearHandle && distance <= _hoverRadius);
             SetHot(hot);
             // The top grip remains subtly visible while idle, so position it

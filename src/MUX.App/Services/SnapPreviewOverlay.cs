@@ -127,6 +127,12 @@ internal sealed class SnapPreviewOverlay : IDisposable
         private readonly ScaleTransform _scale;
         private readonly bool _vertical;
         private bool _shown;
+        private bool _visible;
+        private bool _positioned;
+        private int _x;
+        private int _y;
+        private int _width;
+        private int _height;
         private bool _disposed;
 
         public EdgeIndicatorWindow(bool vertical)
@@ -204,17 +210,29 @@ internal sealed class SnapPreviewOverlay : IDisposable
                 return;
             }
 
-            _ = SetWindowPos(
-                hwnd,
-                HwndTopmost,
-                x,
-                y,
-                Math.Max(1, width),
-                Math.Max(1, height),
-                SwpNoActivate | SwpNoOwnerZOrder);
+            width = Math.Max(1, width);
+            height = Math.Max(1, height);
+            if (!_positioned || _x != x || _y != y || _width != width || _height != height)
+            {
+                _ = SetWindowPos(hwnd, HwndTopmost, x, y, width, height,
+                    SwpNoActivate | SwpNoOwnerZOrder);
+                _x = x;
+                _y = y;
+                _width = width;
+                _height = height;
+                _positioned = true;
+            }
 
-            BeginAnimation(
-                OpacityProperty,
+            // Do not restart a 105ms animation on every 16ms cursor update.
+            // Restarting continuously kept the cue flickering and created a
+            // stream of unnecessary native window position changes.
+            if (_visible)
+            {
+                return;
+            }
+
+            _visible = true;
+            BeginAnimation(OpacityProperty,
                 new DoubleAnimation(Opacity, 1.0, TimeSpan.FromMilliseconds(105))
                 {
                     EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
@@ -222,12 +240,9 @@ internal sealed class SnapPreviewOverlay : IDisposable
                 HandoffBehavior.SnapshotAndReplace);
 
             var property = _vertical ? ScaleTransform.ScaleYProperty : ScaleTransform.ScaleXProperty;
-            _scale.BeginAnimation(
-                property,
-                new DoubleAnimation(
-                    _vertical ? _scale.ScaleY : _scale.ScaleX,
-                    1.0,
-                    TimeSpan.FromMilliseconds(125))
+            _scale.BeginAnimation(property,
+                new DoubleAnimation(_vertical ? _scale.ScaleY : _scale.ScaleX,
+                    1.0, TimeSpan.FromMilliseconds(125))
                 {
                     EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
                 },
@@ -236,11 +251,12 @@ internal sealed class SnapPreviewOverlay : IDisposable
 
         public void HideAnimated()
         {
-            if (_disposed || !_shown || Opacity <= 0.001)
+            if (_disposed || !_shown || !_visible)
             {
                 return;
             }
 
+            _visible = false;
             BeginAnimation(
                 OpacityProperty,
                 new DoubleAnimation(Opacity, 0.0, TimeSpan.FromMilliseconds(90))

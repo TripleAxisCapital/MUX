@@ -4,11 +4,14 @@
 #ifndef OutputDir
   #define OutputDir "..\artifacts\installers"
 #endif
+#ifndef SetupIconPath
+  #define SetupIconPath "..\src\MUX.App\Assets\mux-app.ico"
+#endif
 
 #define MyAppName "MUX Virtual Displays"
 #define MyAppPublisher "Triple Axis Capital"
 #define MyAppExeName "MUX.Virtual.exe"
-#define MyAppVersion GetFileVersion(AddBackslash(SourceDir) + MyAppExeName)
+#define MyAppVersion GetVersionNumbersString(AddBackslash(SourceDir) + MyAppExeName)
 
 [Setup]
 AppId={{D2018F1B-66D5-4A67-8B16-637A82D0AFD2}
@@ -20,7 +23,7 @@ DefaultGroupName=MUX Virtual Displays
 DisableProgramGroupPage=yes
 OutputDir={#OutputDir}
 OutputBaseFilename=MUX-Virtual-Setup-x64
-SetupIconFile=..\src\MUX.App\Assets\mux-app.ico
+SetupIconFile={#SetupIconPath}
 UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma2/ultra64
 SolidCompression=yes

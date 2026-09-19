@@ -4,11 +4,14 @@
 #ifndef OutputDir
   #define OutputDir "..\artifacts\installers"
 #endif
+#ifndef SetupIconPath
+  #define SetupIconPath "..\src\MUX.App\Assets\mux-app.ico"
+#endif
 
 #define MyAppName "MUX"
 #define MyAppPublisher "Triple Axis Capital"
 #define MyAppExeName "MUX.exe"
-#define MyAppVersion GetFileVersion(AddBackslash(SourceDir) + MyAppExeName)
+#define MyAppVersion GetVersionNumbersString(AddBackslash(SourceDir) + MyAppExeName)
 
 [Setup]
 AppId={{3D06F57F-0E79-42E0-B40B-1FEF0DDF63D1}
@@ -20,7 +23,7 @@ DefaultGroupName=MUX
 DisableProgramGroupPage=yes
 OutputDir={#OutputDir}
 OutputBaseFilename=MUX-Standard-Setup-x64
-SetupIconFile=..\src\MUX.App\Assets\mux-app.ico
+SetupIconFile={#SetupIconPath}
 UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma2/ultra64
 SolidCompression=yes

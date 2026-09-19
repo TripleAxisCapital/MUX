@@ -27,6 +27,35 @@ $iss = if ($Edition -eq "Standard") {
     Join-Path $repoRoot "installer\MUX-Virtual.iss"
 }
 
+# Inno Setup is stricter about ICO containers than WPF/MSBuild. Extract the
+# icon Windows actually embedded in the published executable and save a clean
+# ICO for the installer executable and Installed Apps surface.
+$mainExe = if ($Edition -eq "Standard") {
+    Join-Path $SourceDir "MUX.exe"
+} else {
+    Join-Path $SourceDir "MUX.Virtual.exe"
+}
+if (-not (Test-Path $mainExe)) {
+    throw "Published application executable was not found: $mainExe"
+}
+
+Add-Type -AssemblyName System.Drawing
+$setupIconPath = Join-Path $OutputDir "mux-setup.ico"
+$icon = [System.Drawing.Icon]::ExtractAssociatedIcon($mainExe)
+if (-not $icon) {
+    throw "Windows could not extract the embedded MUX icon from $mainExe."
+}
+try {
+    $stream = [System.IO.File]::Create($setupIconPath)
+    try {
+        $icon.Save($stream)
+    } finally {
+        $stream.Dispose()
+    }
+} finally {
+    $icon.Dispose()
+}
+
 $programFilesX86 = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFilesX86)
 $isccCandidates = @(
     (Join-Path $programFilesX86 "Inno Setup 6\ISCC.exe"),
@@ -47,7 +76,7 @@ if (-not $isccCandidates) {
 $iscc = $isccCandidates | Select-Object -First 1
 Write-Host "Building MUX $Edition installer with $iscc"
 
-& $iscc "/DSourceDir=$SourceDir" "/DOutputDir=$OutputDir" $iss
+& $iscc "/DSourceDir=$SourceDir" "/DOutputDir=$OutputDir" "/DSetupIconPath=$setupIconPath" $iss
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }

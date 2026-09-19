@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows;
@@ -34,6 +35,7 @@ public sealed class ReliableWindowLinkService : IDisposable
 
     private readonly Dictionary<IntPtr, LinkedGroup> _byWindow = new();
     private readonly List<IntPtr> _hooks = new();
+    private readonly ConcurrentDictionary<IntPtr, byte> _pendingLocationEvents = new();
     private readonly WinEventDelegate _eventDelegate;
     private readonly Dispatcher _dispatcher;
     private bool _disposed;
@@ -257,11 +259,24 @@ public sealed class ReliableWindowLinkService : IDisposable
 
         try
         {
-            // Do not queue every LOCATIONCHANGE at Send priority. Coalescing on the UI dispatcher is
-            // the important part of keeping the group visually rigid during high-rate mouse input.
-            _dispatcher.BeginInvoke(
-                eventType == EventObjectLocationChange ? DispatcherPriority.Input : DispatcherPriority.Send,
-                new Action(() => HandleEvent(eventType, hwnd)));
+            if (eventType == EventObjectLocationChange)
+            {
+                if (!_pendingLocationEvents.TryAdd(hwnd, 0))
+                {
+                    return;
+                }
+
+                _dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() =>
+                {
+                    _pendingLocationEvents.TryRemove(hwnd, out _);
+                    HandleEvent(eventType, hwnd);
+                }));
+            }
+            else
+            {
+                _dispatcher.BeginInvoke(DispatcherPriority.Send,
+                    new Action(() => HandleEvent(eventType, hwnd)));
+            }
         }
         catch
         {

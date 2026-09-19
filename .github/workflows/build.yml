@@ -77,9 +77,16 @@ jobs:
           if ($installed.ExitCode -ne 0) { throw "Standard installer exited with $($installed.ExitCode)." }
           if (-not (Test-Path (Join-Path $installDir "MUX.exe"))) { throw "Installed MUX.exe was not found." }
 
-          $entry = Get-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*" -ErrorAction SilentlyContinue |
-            Where-Object { $_.DisplayName -eq "MUX" } |
-            Select-Object -First 1
+          $uninstallRoots = @(
+            "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "HKCU:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+          )
+          $entries = foreach ($root in $uninstallRoots) {
+            Get-ItemProperty $root -ErrorAction SilentlyContinue
+          }
+          $entry = $entries | Where-Object { $_.DisplayName -eq "MUX" } | Select-Object -First 1
           if (-not $entry -or -not $entry.UninstallString) { throw "MUX is not correctly registered in Windows Installed Apps." }
 
           $uninstaller = Join-Path $installDir "unins000.exe"
@@ -314,9 +321,16 @@ jobs:
           if ($installed.ExitCode -ne 0) { throw "Virtual installer exited with $($installed.ExitCode)." }
           if (-not (Test-Path (Join-Path $installDir "MUX.Virtual.exe"))) { throw "Installed MUX.Virtual.exe was not found." }
 
-          $entry = Get-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*" -ErrorAction SilentlyContinue |
-            Where-Object { $_.DisplayName -eq "MUX Virtual Displays" } |
-            Select-Object -First 1
+          $uninstallRoots = @(
+            "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "HKCU:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+          )
+          $entries = foreach ($root in $uninstallRoots) {
+            Get-ItemProperty $root -ErrorAction SilentlyContinue
+          }
+          $entry = $entries | Where-Object { $_.DisplayName -eq "MUX Virtual Displays" } | Select-Object -First 1
           if (-not $entry -or -not $entry.UninstallString) { throw "MUX Virtual Displays is not correctly registered in Windows Installed Apps." }
 
           $uninstaller = Join-Path $installDir "unins000.exe"

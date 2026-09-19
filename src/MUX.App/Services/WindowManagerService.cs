@@ -32,6 +32,7 @@ public sealed class WindowManagerService : IDisposable
     private readonly ConcurrentDictionary<IntPtr, PixelRect> _lastNormalRects = new();
     private readonly ConcurrentDictionary<IntPtr, Guid> _windowZones = new();
     private readonly ConcurrentDictionary<IntPtr, byte> _suppressed = new();
+    private readonly ConcurrentDictionary<IntPtr, byte> _pendingLocationEvents = new();
     private readonly Dispatcher _dispatcher;
     private readonly ZoneOutlineService _outlineService = new();
     private DisplayProfile? _display;
@@ -185,6 +186,24 @@ public sealed class WindowManagerService : IDisposable
 
         if (eventType >= EventObjectStart && idObject != ObjidWindow)
         {
+            return;
+        }
+
+        if (eventType == EventObjectLocationChange)
+        {
+            // Native movement hooks can fire hundreds of times per second. Process
+            // only the latest location at background priority so tracking cannot
+            // starve the render loop or compete with active drag/snap handlers.
+            if (!_pendingLocationEvents.TryAdd(hwnd, 0))
+            {
+                return;
+            }
+
+            _dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
+            {
+                _pendingLocationEvents.TryRemove(hwnd, out _);
+                HandleEvent(eventType, hwnd);
+            }));
             return;
         }
 

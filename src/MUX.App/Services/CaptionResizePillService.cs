@@ -184,6 +184,7 @@ public sealed class CaptionResizePillService : IDisposable
             // Topmost helper windows can sit over the actual caption. Walk top-level
             // windows in Z-order and skip our own overlays rather than rejecting the hit.
             root = IntPtr.Zero;
+            NativeRect foundBounds = default;
             EnumWindows((candidate, _) =>
             {
                 if (!IsCaptionCandidate(candidate, cursor, out var candidateBounds))
@@ -192,13 +193,14 @@ public sealed class CaptionResizePillService : IDisposable
                 }
 
                 root = candidate;
-                bounds = candidateBounds;
+                foundBounds = candidateBounds;
                 return false;
             }, IntPtr.Zero);
             if (root == IntPtr.Zero)
             {
                 return false;
             }
+            bounds = foundBounds;
         }
 
         hwnd = root;

@@ -18,10 +18,9 @@ public sealed class EdgeCoverTemplateCoordinator : IDisposable
 {
     private const int GwlExStyle = -20;
     private const long WsExTransparent = 0x00000020L;
-    private const int TopInteractiveBandDip = 20;
-    private const int OtherInteractiveBandDip = 34;
-    private const int CaptionReserveDip = 190;
-    private const int MinimumTopDragWidthDip = 96;
+    private const int TopInteractiveBandDip = 12;
+    private const int OtherInteractiveBandDip = 12;
+    private const int HandleHalfLengthDip = 36;
     private const int TemplateVersion = 1;
 
     private const uint SwpNoSize = 0x0001;
@@ -177,40 +176,31 @@ public sealed class EdgeCoverTemplateCoordinator : IDisposable
 
     private static bool IsNearAdjustableBoundary(EdgeSide side, NativePoint cursor, SessionGeometry geometry)
     {
-        var topBand = ScaleForDpi(TopInteractiveBandDip, geometry.Dpi);
-        var otherBand = ScaleForDpi(OtherInteractiveBandDip, geometry.Dpi);
-
-        if (side == EdgeSide.Top)
+        var horizontal = side is EdgeSide.Top or EdgeSide.Bottom;
+        var start = horizontal ? geometry.Left : geometry.Top;
+        var end = horizontal ? geometry.Right : geometry.Bottom;
+        var desired = side == EdgeSide.Top
+            ? start + Math.Max(0, end - start) / 4
+            : start + Math.Max(0, end - start) / 2;
+        var longPx = ScaleForDpi(64, geometry.Dpi);
+        var padding = ScaleForDpi(8, geometry.Dpi);
+        var half = longPx / 2;
+        var min = start + half + padding;
+        var max = end - half - padding;
+        var center = min <= max ? Math.Clamp(desired, min, max) : start + Math.Max(0, end - start) / 2;
+        var along = horizontal ? cursor.X : cursor.Y;
+        var boundary = side switch
         {
-            var captionReserve = Math.Min(
-                ScaleForDpi(CaptionReserveDip, geometry.Dpi),
-                Math.Max(0, geometry.Width - ScaleForDpi(MinimumTopDragWidthDip, geometry.Dpi)));
-            var captionStart = geometry.Right - captionReserve;
-
-            // Keep the caption-button cluster completely click-through so hovering minimize,
-            // maximize, or close can still reveal the MUX pill even with a very thin top bar.
-            if (captionReserve > 0 && cursor.X >= captionStart)
-            {
-                return false;
-            }
-
-            return cursor.X >= geometry.Left && cursor.X < geometry.Right &&
-                   Math.Abs(cursor.Y - (geometry.Top + geometry.TopThickness)) <= topBand;
-        }
-
-        return side switch
-        {
-            EdgeSide.Bottom =>
-                cursor.X >= geometry.Left && cursor.X < geometry.Right &&
-                Math.Abs(cursor.Y - (geometry.Bottom - geometry.BottomThickness)) <= otherBand,
-            EdgeSide.Left =>
-                cursor.Y >= geometry.Top && cursor.Y < geometry.Bottom &&
-                Math.Abs(cursor.X - (geometry.Left + geometry.LeftThickness)) <= otherBand,
-            EdgeSide.Right =>
-                cursor.Y >= geometry.Top && cursor.Y < geometry.Bottom &&
-                Math.Abs(cursor.X - (geometry.Right - geometry.RightThickness)) <= otherBand,
-            _ => false
+            EdgeSide.Top => geometry.Top + geometry.TopThickness,
+            EdgeSide.Bottom => geometry.Bottom - geometry.BottomThickness,
+            EdgeSide.Left => geometry.Left + geometry.LeftThickness,
+            _ => geometry.Right - geometry.RightThickness
         };
+        var cross = horizontal ? cursor.Y : cursor.X;
+        var radius = ScaleForDpi(horizontal ? TopInteractiveBandDip : OtherInteractiveBandDip, geometry.Dpi);
+        return along >= start && along < end &&
+               Math.Abs(along - center) <= ScaleForDpi(HandleHalfLengthDip, geometry.Dpi) &&
+               Math.Abs(cross - boundary) <= radius;
     }
 
     private void SetTransparent(IntPtr hwnd, bool transparent)

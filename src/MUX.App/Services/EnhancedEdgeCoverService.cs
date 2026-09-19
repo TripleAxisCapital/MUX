@@ -425,6 +425,8 @@ public sealed class EnhancedEdgeCoverService : IDisposable
         private NativePoint _dragStart;
         private int _dragStartThickness;
         private bool _shown;
+        private bool _positioned;
+        private NativeRect _lastPositioned;
         private bool _disposed;
 
         public EdgeOverlayWindow(EdgeSide side, Func<int> getThickness, Action<int> setThickness)
@@ -549,8 +551,8 @@ public sealed class EnhancedEdgeCoverService : IDisposable
             _targetRect = targetRect;
             _thickness = Math.Max(1, thickness);
             _dpi = Math.Max(96u, dpi);
-            _grabRadius = ScaleForDpi(64, _dpi);
-            _hoverRadius = ScaleForDpi(76, _dpi);
+            _grabRadius = ScaleForDpi(12, _dpi);
+            _hoverRadius = ScaleForDpi(22, _dpi);
             _overlayRect = CalculateOverlayRect(targetRect, _thickness, _hoverRadius, _side);
 
             EnsureShownAndPositioned();
@@ -573,14 +575,19 @@ public sealed class EnhancedEdgeCoverService : IDisposable
                 return;
             }
 
-            SetWindowPos(
-                hwnd,
-                IntPtr.Zero,
-                _overlayRect.Left,
-                _overlayRect.Top,
-                Math.Max(1, _overlayRect.Width),
-                Math.Max(1, _overlayRect.Height),
-                SwpNoZOrder | SwpNoActivate | SwpNoOwnerZOrder);
+            if (!_positioned || !_lastPositioned.Equals(_overlayRect))
+            {
+                SetWindowPos(
+                    hwnd,
+                    IntPtr.Zero,
+                    _overlayRect.Left,
+                    _overlayRect.Top,
+                    Math.Max(1, _overlayRect.Width),
+                    Math.Max(1, _overlayRect.Height),
+                    SwpNoZOrder | SwpNoActivate | SwpNoOwnerZOrder);
+                _lastPositioned = _overlayRect;
+                _positioned = true;
+            }
             Opacity = 1;
         }
 
@@ -633,7 +640,11 @@ public sealed class EnhancedEdgeCoverService : IDisposable
                 ? Math.Abs(point.Y - boundary)
                 : Math.Abs(point.X - boundary);
 
-            var hot = _dragging || (along && distance <= _hoverRadius);
+            var handleCenter = HandleCenter();
+            var nearHandle = _side is EdgeSide.Top or EdgeSide.Bottom
+                ? Math.Abs(point.X - handleCenter) <= ScaleForDpi(50, _dpi)
+                : Math.Abs(point.Y - handleCenter) <= ScaleForDpi(50, _dpi);
+            var hot = _dragging || (along && nearHandle && distance <= _hoverRadius);
             SetHot(hot);
             if (!hot)
             {
@@ -643,13 +654,11 @@ public sealed class EnhancedEdgeCoverService : IDisposable
             var scale = _dpi / 96.0;
             var longPx = ScaleForDpi(64, _dpi);
             var shortPx = ScaleForDpi(24, _dpi);
-            var paddingPx = ScaleForDpi(8, _dpi);
-
             if (_side is EdgeSide.Top or EdgeSide.Bottom)
             {
                 _handle.Width = longPx / scale;
                 _handle.Height = shortPx / scale;
-                var center = ClampCenter(point.X, _targetRect.Left, _targetRect.Right, longPx, paddingPx);
+                var center = HandleCenter();
                 Canvas.SetLeft(_handle, (center - longPx / 2 - _overlayRect.Left) / scale);
                 Canvas.SetTop(_handle, (boundary - shortPx / 2 - _overlayRect.Top) / scale);
             }
@@ -657,7 +666,7 @@ public sealed class EnhancedEdgeCoverService : IDisposable
             {
                 _handle.Width = shortPx / scale;
                 _handle.Height = longPx / scale;
-                var center = ClampCenter(point.Y, _targetRect.Top, _targetRect.Bottom, longPx, paddingPx);
+                var center = HandleCenter();
                 Canvas.SetLeft(_handle, (boundary - shortPx / 2 - _overlayRect.Left) / scale);
                 Canvas.SetTop(_handle, (center - longPx / 2 - _overlayRect.Top) / scale);
             }
@@ -686,6 +695,18 @@ public sealed class EnhancedEdgeCoverService : IDisposable
                 HandoffBehavior.SnapshotAndReplace);
         }
 
+        private int HandleCenter()
+        {
+            var horizontal = _side is EdgeSide.Top or EdgeSide.Bottom;
+            var start = horizontal ? _targetRect.Left : _targetRect.Top;
+            var end = horizontal ? _targetRect.Right : _targetRect.Bottom;
+            // Reserve the centre of the native title bar for ordinary window dragging.
+            var desired = _side == EdgeSide.Top
+                ? start + Math.Max(0, end - start) / 4
+                : start + Math.Max(0, end - start) / 2;
+            return ClampCenter(desired, start, end, ScaleForDpi(64, _dpi), ScaleForDpi(8, _dpi));
+        }
+
         private bool IsInteractivePoint(NativePoint point)
         {
             if (_disposed || !_shown)
@@ -693,35 +714,16 @@ public sealed class EnhancedEdgeCoverService : IDisposable
                 return false;
             }
 
-            var along = _side is EdgeSide.Top or EdgeSide.Bottom
-                ? point.X >= _targetRect.Left && point.X < _targetRect.Right
-                : point.Y >= _targetRect.Top && point.Y < _targetRect.Bottom;
-            if (!along)
-            {
-                return false;
-            }
-
-            var boundary = InnerBoundary();
+            // Hit-test only the dedicated resize handle, never the black surface or
+            // the large transparent proximity overlay covering the target caption.
             var nearBoundary = _side is EdgeSide.Top or EdgeSide.Bottom
-                ? Math.Abs(point.Y - boundary) <= _grabRadius
-                : Math.Abs(point.X - boundary) <= _grabRadius;
-
-            return nearBoundary || IsOnBlackCover(point);
+                ? Math.Abs(point.Y - InnerBoundary()) <= _grabRadius
+                : Math.Abs(point.X - InnerBoundary()) <= _grabRadius;
+            var nearHandle = _side is EdgeSide.Top or EdgeSide.Bottom
+                ? Math.Abs(point.X - HandleCenter()) <= ScaleForDpi(36, _dpi)
+                : Math.Abs(point.Y - HandleCenter()) <= ScaleForDpi(36, _dpi);
+            return _dragging || (nearBoundary && nearHandle);
         }
-
-        private bool IsOnBlackCover(NativePoint point)
-            => _side switch
-            {
-                EdgeSide.Top =>
-                    point.Y >= _targetRect.Top && point.Y < _targetRect.Top + _thickness,
-                EdgeSide.Bottom =>
-                    point.Y >= _targetRect.Bottom - _thickness && point.Y < _targetRect.Bottom,
-                EdgeSide.Left =>
-                    point.X >= _targetRect.Left && point.X < _targetRect.Left + _thickness,
-                EdgeSide.Right =>
-                    point.X >= _targetRect.Right - _thickness && point.X < _targetRect.Right,
-                _ => false
-            };
 
         private int InnerBoundary()
             => _side switch
@@ -810,6 +812,7 @@ public sealed class EnhancedEdgeCoverService : IDisposable
                     SwpNoZOrder | SwpNoActivate | SwpNoOwnerZOrder);
             }
             Opacity = 0;
+            _positioned = false;
         }
 
         public void Dispose()

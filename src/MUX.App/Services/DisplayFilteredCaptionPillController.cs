@@ -80,14 +80,10 @@ public sealed class DisplayFilteredCaptionPillController : IDisposable
         _lastAllowed = allowed;
         _lastDeviceName = deviceName;
 
-        if (allowed)
-        {
-            EnsureService();
-        }
-        else
-        {
-            StopService();
-        }
+        // Show/hide one persistent pill instead of allocating and destroying a WPF
+        // window (and its control services) on every monitor boundary crossing.
+        EnsureService();
+        _service?.SetDisplayAllowed(allowed);
     }
 
     private bool IsDisabled(string deviceName)

@@ -48,6 +48,7 @@ public sealed class CaptionResizePillService : IDisposable
     private int _targetCaptionHeight;
     private DateTime _lastHotUtc = DateTime.MinValue;
     private bool _started;
+    private bool _displayAllowed = true;
     private bool _disposed;
 
     public CaptionResizePillService(Func<DisplaySizingSnapshot>? sizingProvider = null, bool autoStart = false)
@@ -81,6 +82,29 @@ public sealed class CaptionResizePillService : IDisposable
         _timer.Start();
     }
 
+    // Preserve the pill window and its live feature state when the pointer crosses
+    // a display where the user has disabled the floating controls.
+    public void SetDisplayAllowed(bool allowed)
+    {
+        if (_disposed || _displayAllowed == allowed)
+        {
+            return;
+        }
+
+        _displayAllowed = allowed;
+        if (!allowed)
+        {
+            DismissTarget();
+        }
+    }
+
+    private void DismissTarget()
+    {
+        _pill.Collapse(animate: false);
+        _pill.Dismiss();
+        _targetHwnd = IntPtr.Zero;
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -111,7 +135,7 @@ public sealed class CaptionResizePillService : IDisposable
 
     private void Timer_Tick(object? sender, EventArgs e)
     {
-        if (_disposed || !GetCursorPos(out var cursor))
+        if (_disposed || !_displayAllowed || !GetCursorPos(out var cursor))
         {
             return;
         }
@@ -121,7 +145,15 @@ public sealed class CaptionResizePillService : IDisposable
         if (_pill.IsVisible && (_pill.IsMouseOver || _pill.IsInteractionLocked))
         {
             _lastHotUtc = now;
+            if (_targetHwnd == IntPtr.Zero || !IsWindow(_targetHwnd) ||
+                !IsWindowVisible(_targetHwnd) || IsIconic(_targetHwnd))
+            {
+                DismissTarget();
+                return;
+            }
+
             RefreshCurrentTarget();
+            PositionPill(_targetVisualBounds, _targetDpi, _targetClusterWidth, _targetCaptionHeight);
             return;
         }
 
@@ -157,9 +189,7 @@ public sealed class CaptionResizePillService : IDisposable
 
         if (_pill.IsVisible && now - _lastHotUtc >= HideDelay)
         {
-            _pill.Collapse(animate: false);
-            _pill.Dismiss();
-            _targetHwnd = IntPtr.Zero;
+            DismissTarget();
         }
     }
 

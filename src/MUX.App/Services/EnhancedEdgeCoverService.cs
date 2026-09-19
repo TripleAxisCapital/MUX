@@ -488,6 +488,7 @@ public sealed class EnhancedEdgeCoverService : IDisposable
         private const int MaNoActivate = 3;
         private const int HtClient = 1;
         private const int HtTransparent = -1;
+        private const int VkLeftButton = 0x01;
         private const uint SwpNoSize = 0x0001;
         private const uint SwpNoZOrder = 0x0004;
         private const uint SwpNoActivate = 0x0010;
@@ -643,7 +644,21 @@ public sealed class EnhancedEdgeCoverService : IDisposable
                 return;
             }
 
-            SetInputTransparent(!globallyVisible || (!_dragging && !IsInteractivePoint(cursor)));
+            // Evaluate caption proximity on the responsive input cadence rather
+            // than only on the rendering timer. Reaching the top cover must
+            // reveal the underlying title bar even under heavy window movement.
+            if (_side == EdgeSide.Top && globallyVisible)
+            {
+                UpdateTopBarReveal(cursor);
+            }
+
+            // When dragging a normal window through the top edge, never arm the
+            // bar grip under the pressed pointer. Only an already captured
+            // cover-resize gesture retains its own mouse input.
+            var windowDragInProgress = _side == EdgeSide.Top && !_dragging &&
+                (GetAsyncKeyState(VkLeftButton) & 0x8000) != 0;
+            SetInputTransparent(!globallyVisible || windowDragInProgress ||
+                (!_dragging && !IsInteractivePoint(cursor)));
         }
 
         private void SetInputTransparent(bool transparent)
@@ -689,9 +704,9 @@ public sealed class EnhancedEdgeCoverService : IDisposable
 
             EnsureShownAndPositioned();
             DrawCover();
-            if (_side == EdgeSide.Top)
+            if (_side == EdgeSide.Top && cursor is NativePoint current)
             {
-                UpdateTopBarReveal(cursor);
+                UpdateTopBarReveal(current);
             }
             DrawHandle(cursor);
         }
@@ -775,7 +790,11 @@ public sealed class EnhancedEdgeCoverService : IDisposable
                 // A separate grip lives at the inner edge, away from the middle
                 // of the title bar. Hovering it takes precedence over unveiling
                 // the caption so the top bar can still be resized.
-                var nearGrip = IsInteractivePoint(point);
+                // Only the actual visible grip is reserved for resizing; the
+                // old 19-pixel proximity radius masked a large part of the
+                // title bar and prevented the auto-hide trigger.
+                var nearGrip = Math.Abs(point.X - HandleCenter()) <= ScaleForDpi(32, _dpi) &&
+                    Math.Abs(point.Y - InnerBoundary()) <= ScaleForDpi(9, _dpi);
                 if (nearGrip)
                 {
                     _lastTopHoverUtc = DateTime.MinValue;
@@ -783,8 +802,8 @@ public sealed class EnhancedEdgeCoverService : IDisposable
                     return;
                 }
 
-                var approach = ScaleForDpi(22, _dpi);
-                var titleBand = Math.Max(ScaleForDpi(54, _dpi), _thickness + approach);
+                var approach = ScaleForDpi(36, _dpi);
+                var titleBand = Math.Max(ScaleForDpi(86, _dpi), _thickness + ScaleForDpi(52, _dpi));
                 if (point.X >= _targetRect.Left && point.X < _targetRect.Right &&
                     point.Y >= _targetRect.Top - approach &&
                     point.Y <= Math.Min(_targetRect.Bottom, _targetRect.Top + titleBand))
@@ -797,7 +816,7 @@ public sealed class EnhancedEdgeCoverService : IDisposable
 
             // A short exit delay prevents flicker when crossing the cover edge
             // or moving from the caption into a native/custom caption button.
-            if (now - _lastTopHoverUtc >= TimeSpan.FromMilliseconds(290))
+            if (now - _lastTopHoverUtc >= TimeSpan.FromMilliseconds(360))
             {
                 SetTopBarRevealed(true);
             }
@@ -812,8 +831,8 @@ public sealed class EnhancedEdgeCoverService : IDisposable
 
             _topBarRevealed = revealed;
             _cover.BeginAnimation(OpacityProperty,
-                new DoubleAnimation(_cover.Opacity, revealed ? 1.0 : 0.0,
-                    TimeSpan.FromMilliseconds(revealed ? 160 : 115))
+                new DoubleAnimation(revealed ? 1.0 : 0.0,
+                    TimeSpan.FromMilliseconds(revealed ? 175 : 135))
                 {
                     EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
                 },
@@ -924,6 +943,11 @@ public sealed class EnhancedEdgeCoverService : IDisposable
             var nearHandle = _side is EdgeSide.Top or EdgeSide.Bottom
                 ? Math.Abs(point.X - HandleCenter()) <= ScaleForDpi(36, _dpi)
                 : Math.Abs(point.Y - HandleCenter()) <= ScaleForDpi(36, _dpi);
+            if (_side == EdgeSide.Top && !_dragging && !_topBarRevealed)
+            {
+                return false;
+            }
+
             return _dragging || (nearBoundary && nearHandle);
         }
 
@@ -1092,6 +1116,9 @@ public sealed class EnhancedEdgeCoverService : IDisposable
                 Y = unchecked((short)((value >> 16) & 0xFFFF))
             };
         }
+
+        [DllImport("user32.dll")]
+        private static extern short GetAsyncKeyState(int virtualKey);
 
         [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
         private static extern IntPtr GetWindowLongPtr64(IntPtr hwnd, int index);

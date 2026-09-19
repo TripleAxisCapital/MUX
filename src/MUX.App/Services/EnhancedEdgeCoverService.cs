@@ -518,6 +518,9 @@ public sealed class EnhancedEdgeCoverService : IDisposable
         private bool _shown;
         private bool _positioned;
         private bool _topBarRevealed = true;
+        private bool _leftButtonWasDown;
+        private bool _pressStartedOnGrip;
+        private double _lastGripOpacity = -1;
         private DateTime _lastTopHoverUtc = DateTime.MinValue;
         private NativeRect _lastPositioned;
         private bool _disposed;
@@ -545,7 +548,8 @@ public sealed class EnhancedEdgeCoverService : IDisposable
 
             _canvas = new Canvas { Background = Brushes.Transparent, ClipToBounds = true };
             _cover = new Border { Background = Brushes.Black, SnapsToDevicePixels = true };
-            _handleScale = new ScaleTransform(0.82, 0.82);
+            _handleScale = new ScaleTransform(side == EdgeSide.Top ? 0.92 : 0.82,
+                side == EdgeSide.Top ? 0.92 : 0.82);
             _handle = BuildHandle(side, _handleScale);
             _canvas.Children.Add(_cover);
             _canvas.Children.Add(_handle);
@@ -559,6 +563,25 @@ public sealed class EnhancedEdgeCoverService : IDisposable
 
         private static Border BuildHandle(EdgeSide side, ScaleTransform scale)
         {
+            if (side == EdgeSide.Top)
+            {
+                // A restrained, always-discoverable 36 x 5 DIP indicator. Its
+                // invisible 64 x 24 physical-pixel click zone is calculated
+                // separately, so the bar never becomes a giant drag target.
+                return new Border
+                {
+                    Width = 36,
+                    Height = 5,
+                    Background = new SolidColorBrush(Color.FromRgb(226, 226, 233)),
+                    CornerRadius = new CornerRadius(3),
+                    Opacity = 0.25,
+                    RenderTransform = scale,
+                    RenderTransformOrigin = new Point(0.5, 0.5),
+                    IsHitTestVisible = false,
+                    SnapsToDevicePixels = true
+                };
+            }
+
             var grip = new StackPanel
             {
                 Orientation = side is EdgeSide.Top or EdgeSide.Bottom
@@ -644,21 +667,38 @@ public sealed class EnhancedEdgeCoverService : IDisposable
                 return;
             }
 
-            // Evaluate caption proximity on the responsive input cadence rather
-            // than only on the rendering timer. Reaching the top cover must
-            // reveal the underlying title bar even under heavy window movement.
-            if (_side == EdgeSide.Top && globallyVisible)
+            if (_side == EdgeSide.Top)
             {
-                UpdateTopBarReveal(cursor);
+                // Distinguish a press that began on our already-armed resize
+                // grip from a normal title-bar drag passing through the grip.
+                // The previous implementation made *every* pressed pointer
+                // transparent, including the grip itself, so resize could
+                // never acquire mouse capture.
+                var leftDown = (GetAsyncKeyState(VkLeftButton) & 0x8000) != 0;
+                if (!leftDown)
+                {
+                    _pressStartedOnGrip = false;
+                }
+                else if (!_leftButtonWasDown)
+                {
+                    _pressStartedOnGrip = !_inputTransparent && IsTopGripHit(cursor);
+                }
+
+                _leftButtonWasDown = leftDown;
+
+                if (globallyVisible)
+                {
+                    UpdateTopBarReveal(cursor);
+                    DrawHandle(cursor);
+                }
+
+                var gripIsAvailable = _dragging ||
+                    (IsInteractivePoint(cursor) && (!leftDown || _pressStartedOnGrip));
+                SetInputTransparent(!globallyVisible || !gripIsAvailable);
+                return;
             }
 
-            // When dragging a normal window through the top edge, never arm the
-            // bar grip under the pressed pointer. Only an already captured
-            // cover-resize gesture retains its own mouse input.
-            var windowDragInProgress = _side == EdgeSide.Top && !_dragging &&
-                (GetAsyncKeyState(VkLeftButton) & 0x8000) != 0;
-            SetInputTransparent(!globallyVisible || windowDragInProgress ||
-                (!_dragging && !IsInteractivePoint(cursor)));
+            SetInputTransparent(!globallyVisible || (!_dragging && !IsInteractivePoint(cursor)));
         }
 
         private void SetInputTransparent(bool transparent)
@@ -698,7 +738,7 @@ public sealed class EnhancedEdgeCoverService : IDisposable
             _dpi = Math.Max(96u, dpi);
             // The top-edge grip needs a larger hit area than the side grips,
             // particularly at the minimum 4-DIP black-bar thickness.
-            _grabRadius = ScaleForDpi(_side == EdgeSide.Top ? 19 : 12, _dpi);
+            _grabRadius = ScaleForDpi(_side == EdgeSide.Top ? 12 : 12, _dpi);
             _hoverRadius = ScaleForDpi(_side == EdgeSide.Top ? 30 : 22, _dpi);
             _overlayRect = CalculateOverlayRect(targetRect, _thickness, _hoverRadius, _side);
 
@@ -787,15 +827,10 @@ public sealed class EnhancedEdgeCoverService : IDisposable
 
             if (cursor is NativePoint point)
             {
-                // A separate grip lives at the inner edge, away from the middle
-                // of the title bar. Hovering it takes precedence over unveiling
-                // the caption so the top bar can still be resized.
-                // Only the actual visible grip is reserved for resizing; the
-                // old 19-pixel proximity radius masked a large part of the
-                // title bar and prevented the auto-hide trigger.
-                var nearGrip = Math.Abs(point.X - HandleCenter()) <= ScaleForDpi(32, _dpi) &&
-                    Math.Abs(point.Y - InnerBoundary()) <= ScaleForDpi(9, _dpi);
-                if (nearGrip)
+                // The hover zone is slightly wider than the click zone so
+                // approaching the centered grip restores the bar even if its
+                // fade-out animation is already in flight.
+                if (IsTopGripHover(point))
                 {
                     _lastTopHoverUtc = DateTime.MinValue;
                     SetTopBarRevealed(true);
@@ -830,6 +865,7 @@ public sealed class EnhancedEdgeCoverService : IDisposable
             }
 
             _topBarRevealed = revealed;
+            UpdateGripOpacity();
             _cover.BeginAnimation(OpacityProperty,
                 new DoubleAnimation(revealed ? 1.0 : 0.0,
                     TimeSpan.FromMilliseconds(revealed ? 175 : 135))
@@ -860,21 +896,20 @@ public sealed class EnhancedEdgeCoverService : IDisposable
             var nearHandle = _side is EdgeSide.Top or EdgeSide.Bottom
                 ? Math.Abs(point.X - handleCenter) <= ScaleForDpi(50, _dpi)
                 : Math.Abs(point.Y - handleCenter) <= ScaleForDpi(50, _dpi);
-            var hot = _dragging || (along && nearHandle && distance <= _hoverRadius);
-            if (_side == EdgeSide.Top && !hot && !_topBarRevealed)
-            {
-                SetHot(false);
-                return;
-            }
+            var hot = _dragging || (_side == EdgeSide.Top
+                ? _topBarRevealed && IsTopGripHover(point)
+                : along && nearHandle && distance <= _hoverRadius);
             SetHot(hot);
-            if (!hot)
+            // The top grip remains subtly visible while idle, so position it
+            // even when the pointer is nowhere near the resize target.
+            if (!hot && _side != EdgeSide.Top)
             {
                 return;
             }
 
             var scale = _dpi / 96.0;
-            var longPx = ScaleForDpi(64, _dpi);
-            var shortPx = ScaleForDpi(24, _dpi);
+            var longPx = ScaleForDpi(_side == EdgeSide.Top ? 36 : 64, _dpi);
+            var shortPx = ScaleForDpi(_side == EdgeSide.Top ? 5 : 24, _dpi);
             if (_side is EdgeSide.Top or EdgeSide.Bottom)
             {
                 _handle.Width = longPx / scale;
@@ -897,34 +932,58 @@ public sealed class EnhancedEdgeCoverService : IDisposable
         {
             if (_hot == hot)
             {
+                UpdateGripOpacity();
                 return;
             }
 
             _hot = hot;
+            UpdateGripOpacity();
             var easing = new CubicEase { EasingMode = hot ? EasingMode.EaseOut : EasingMode.EaseIn };
-            _handle.BeginAnimation(
-                OpacityProperty,
-                new DoubleAnimation(_handle.Opacity, hot ? 1.0 : 0.0, HandleAnimation) { EasingFunction = easing },
-                HandoffBehavior.SnapshotAndReplace);
+            var restingScale = _side == EdgeSide.Top ? 0.92 : 0.82;
             _handleScale.BeginAnimation(
                 ScaleTransform.ScaleXProperty,
-                new DoubleAnimation(_handleScale.ScaleX, hot ? 1.0 : 0.82, HandleAnimation) { EasingFunction = easing },
+                new DoubleAnimation(_handleScale.ScaleX, hot ? 1.0 : restingScale, HandleAnimation) { EasingFunction = easing },
                 HandoffBehavior.SnapshotAndReplace);
             _handleScale.BeginAnimation(
                 ScaleTransform.ScaleYProperty,
-                new DoubleAnimation(_handleScale.ScaleY, hot ? 1.0 : 0.82, HandleAnimation) { EasingFunction = easing },
+                new DoubleAnimation(_handleScale.ScaleY, hot ? 1.0 : restingScale, HandleAnimation) { EasingFunction = easing },
                 HandoffBehavior.SnapshotAndReplace);
         }
+
+        private void UpdateGripOpacity()
+        {
+            var desired = _hot ? 1.0 : _side == EdgeSide.Top && _topBarRevealed ? 0.25 : 0.0;
+            if (Math.Abs(_lastGripOpacity - desired) < 0.001)
+            {
+                return;
+            }
+
+            _lastGripOpacity = desired;
+            _handle.BeginAnimation(
+                OpacityProperty,
+                new DoubleAnimation(desired, HandleAnimation)
+                {
+                    EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+                },
+                HandoffBehavior.SnapshotAndReplace);
+        }
+
+        private bool IsTopGripHit(NativePoint point)
+            => Math.Abs(point.X - HandleCenter()) <= ScaleForDpi(32, _dpi) &&
+               Math.Abs(point.Y - InnerBoundary()) <= ScaleForDpi(12, _dpi);
+
+        private bool IsTopGripHover(NativePoint point)
+            => Math.Abs(point.X - HandleCenter()) <= ScaleForDpi(46, _dpi) &&
+               Math.Abs(point.Y - InnerBoundary()) <= ScaleForDpi(24, _dpi);
 
         private int HandleCenter()
         {
             var horizontal = _side is EdgeSide.Top or EdgeSide.Bottom;
             var start = horizontal ? _targetRect.Left : _targetRect.Top;
             var end = horizontal ? _targetRect.Right : _targetRect.Bottom;
-            // Reserve the centre of the native title bar for ordinary window dragging.
-            var desired = _side == EdgeSide.Top
-                ? start + Math.Max(0, end - start) / 4
-                : start + Math.Max(0, end - start) / 2;
+            // One centered, discoverable grip; every other point on the
+            // black surface stays click-through for native window dragging.
+            var desired = start + Math.Max(0, end - start) / 2;
             return ClampCenter(desired, start, end, ScaleForDpi(64, _dpi), ScaleForDpi(8, _dpi));
         }
 
@@ -935,19 +994,21 @@ public sealed class EnhancedEdgeCoverService : IDisposable
                 return false;
             }
 
-            // Hit-test only the dedicated resize handle, never the black surface or
-            // the large transparent proximity overlay covering the target caption.
+            // The top resize grip has a single authoritative hit-test shared
+            // by the reveal, pressed-button, and actual mouse-down paths.
+            // This remains available while the black surface is fading out.
+            if (_side == EdgeSide.Top)
+            {
+                return _dragging || (_topBarRevealed && IsTopGripHit(point) &&
+                    (!_leftButtonWasDown || _pressStartedOnGrip));
+            }
+
             var nearBoundary = _side is EdgeSide.Top or EdgeSide.Bottom
                 ? Math.Abs(point.Y - InnerBoundary()) <= _grabRadius
                 : Math.Abs(point.X - InnerBoundary()) <= _grabRadius;
             var nearHandle = _side is EdgeSide.Top or EdgeSide.Bottom
                 ? Math.Abs(point.X - HandleCenter()) <= ScaleForDpi(36, _dpi)
                 : Math.Abs(point.Y - HandleCenter()) <= ScaleForDpi(36, _dpi);
-            if (_side == EdgeSide.Top && !_dragging && !_topBarRevealed)
-            {
-                return false;
-            }
-
             return _dragging || (nearBoundary && nearHandle);
         }
 
@@ -968,7 +1029,15 @@ public sealed class EnhancedEdgeCoverService : IDisposable
                 return;
             }
 
+            if (_side == EdgeSide.Top && (!IsTopGripHit(_dragStart) || _inputTransparent))
+            {
+                // Defensive check: a native caption drag must never be turned
+                // into a black-bar resize by the WPF overlay.
+                return;
+            }
+
             _dragging = true;
+            _pressStartedOnGrip = true;
             _dragStartThickness = _getThickness();
             SetInputTransparent(false);
             CaptureMouse();
@@ -999,7 +1068,10 @@ public sealed class EnhancedEdgeCoverService : IDisposable
         }
 
         private void LostCapture(object sender, MouseEventArgs e)
-            => _dragging = false;
+        {
+            _dragging = false;
+            _pressStartedOnGrip = false;
+        }
 
         private void EndDrag()
         {
@@ -1009,6 +1081,7 @@ public sealed class EnhancedEdgeCoverService : IDisposable
             }
 
             _dragging = false;
+            _pressStartedOnGrip = false;
             if (Mouse.Captured == this)
             {
                 ReleaseMouseCapture();
@@ -1028,6 +1101,9 @@ public sealed class EnhancedEdgeCoverService : IDisposable
             _cover.Opacity = 1;
             _topBarRevealed = true;
             _lastTopHoverUtc = DateTime.MinValue;
+            _leftButtonWasDown = false;
+            _pressStartedOnGrip = false;
+            _lastGripOpacity = -1;
             _hot = false;
             _handle.BeginAnimation(OpacityProperty, null);
             _handle.Opacity = 0;

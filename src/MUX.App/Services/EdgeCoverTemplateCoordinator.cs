@@ -1,76 +1,30 @@
-using System.Collections;
-using System.Reflection;
-using System.Runtime.InteropServices;
 using System.Text.Json;
-using System.Windows;
-using System.Windows.Interop;
-using System.Windows.Threading;
 
 namespace MUX.App.Services;
 
 /// <summary>
-/// Durable default templates plus an input-polish layer for EnhancedEdgeCoverService. The black
-/// surfaces stay click-through, but the adjustable inner edge is armed before a click and remains
-/// interactive for the complete drag gesture. This preserves the caption pill and target-window
-/// input without sacrificing direct black-bar dragging.
+/// One durable, versioned black-bar template. Geometry and input ownership remain
+/// in EnhancedEdgeCoverService; this class does not inspect private WPF fields.
 /// </summary>
 public sealed class EdgeCoverTemplateCoordinator : IDisposable
 {
-    private const int GwlExStyle = -20;
-    private const long WsExTransparent = 0x00000020L;
-    private const int TopInteractiveBandDip = 12;
-    private const int OtherInteractiveBandDip = 12;
-    private const int HandleHalfLengthDip = 36;
     private const int TemplateVersion = 1;
-
-    private const uint SwpNoSize = 0x0001;
-    private const uint SwpNoMove = 0x0002;
-    private const uint SwpNoZOrder = 0x0004;
-    private const uint SwpNoActivate = 0x0010;
-    private const uint SwpFrameChanged = 0x0020;
-    private const uint SwpNoOwnerZOrder = 0x0200;
-
     private static readonly Lazy<EdgeCoverTemplateCoordinator> SharedInstance = new(() => new EdgeCoverTemplateCoordinator());
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
-
-    private readonly DispatcherTimer _inputTimer;
-    private readonly Dictionary<IntPtr, bool> _transparentState = new();
     private EdgeCoverTemplate? _template;
-    private EnhancedEdgeCoverService? _service;
-    private FieldInfo? _sessionsField;
     private bool _disposed;
 
-    private EdgeCoverTemplateCoordinator()
-    {
-        _template = LoadTemplate();
-        _inputTimer = new DispatcherTimer(DispatcherPriority.Input)
-        {
-            // Arm the native overlay well before a normal mouse-down arrives. The old 32 ms pass
-            // could leave WS_EX_TRANSPARENT cached for the click that was supposed to begin a drag.
-            Interval = TimeSpan.FromMilliseconds(16)
-        };
-        _inputTimer.Tick += InputTimer_Tick;
-        _inputTimer.Start();
-    }
+    private EdgeCoverTemplateCoordinator() => _template = LoadTemplate();
 
     public static EdgeCoverTemplateCoordinator Shared => SharedInstance.Value;
     public bool HasTemplate => _template is not null;
 
-    public void Attach(EnhancedEdgeCoverService service)
-    {
-        if (_disposed)
-        {
-            return;
-        }
-
-        _service = service;
-        _sessionsField ??= typeof(EnhancedEdgeCoverService).GetField("_sessions", BindingFlags.Instance | BindingFlags.NonPublic);
-    }
+    // Kept as a compatibility entry point for the existing pill UI.
+    public void Attach(EnhancedEdgeCoverService service) { }
 
     public bool SaveTemplate(EnhancedEdgeCoverService service, IntPtr hwnd)
     {
-        Attach(service);
-        if (!TryGetSession(hwnd, out var session) || !TryReadGeometry(session, out var geometry))
+        if (_disposed || !service.TryGetCoverGeometry(hwnd, out var geometry))
         {
             return false;
         }
@@ -83,248 +37,34 @@ public sealed class EdgeCoverTemplateCoordinator : IDisposable
             BottomRatio = Ratio(geometry.BottomThickness, geometry.Height),
             LeftRatio = Ratio(geometry.LeftThickness, geometry.Width)
         };
-        if (!template.IsValid())
+        if (!template.IsValid() || !PersistTemplate(template))
         {
             return false;
         }
 
         _template = template;
-        return PersistTemplate(template);
+        return true;
     }
 
     public bool ApplyTemplate(EnhancedEdgeCoverService service, IntPtr hwnd)
     {
-        Attach(service);
-        if (_template is null || !TryGetSession(hwnd, out var session) || !TryReadGeometry(session, out var geometry))
+        if (_disposed || _template is null || !service.TryGetCoverGeometry(hwnd, out var geometry))
         {
             return false;
         }
 
-        try
-        {
-            var type = session.GetType();
-            SetInt(type, session, "_topThickness", Scale(_template.TopRatio, geometry.Height, geometry.MinimumThickness));
-            SetInt(type, session, "_rightThickness", Scale(_template.RightRatio, geometry.Width, geometry.MinimumThickness));
-            SetInt(type, session, "_bottomThickness", Scale(_template.BottomRatio, geometry.Height, geometry.MinimumThickness));
-            SetInt(type, session, "_leftThickness", Scale(_template.LeftRatio, geometry.Width, geometry.MinimumThickness));
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
+        return service.TrySetCoverThicknesses(hwnd,
+            Scale(_template.TopRatio, geometry.Height, geometry.MinimumThickness),
+            Scale(_template.RightRatio, geometry.Width, geometry.MinimumThickness),
+            Scale(_template.BottomRatio, geometry.Height, geometry.MinimumThickness),
+            Scale(_template.LeftRatio, geometry.Width, geometry.MinimumThickness));
     }
-
-    private void InputTimer_Tick(object? sender, EventArgs e)
-    {
-        if (_disposed || !GetCursorPos(out var cursor) || GetSessions() is not IDictionary sessions)
-        {
-            return;
-        }
-
-        try
-        {
-            var enumerator = sessions.GetEnumerator();
-            while (enumerator.MoveNext())
-            {
-                var session = enumerator.Value;
-                if (session is null || !TryReadGeometry(session, out var geometry))
-                {
-                    continue;
-                }
-
-                UpdateOverlayInput(session, "_top", EdgeSide.Top, cursor, geometry);
-                UpdateOverlayInput(session, "_right", EdgeSide.Right, cursor, geometry);
-                UpdateOverlayInput(session, "_bottom", EdgeSide.Bottom, cursor, geometry);
-                UpdateOverlayInput(session, "_left", EdgeSide.Left, cursor, geometry);
-            }
-
-            PruneDeadOverlayState();
-        }
-        catch
-        {
-            // Input polish is isolated from rendering and may never destabilize the host app.
-        }
-    }
-
-    private void UpdateOverlayInput(
-        object session,
-        string fieldName,
-        EdgeSide side,
-        NativePoint cursor,
-        SessionGeometry geometry)
-    {
-        var overlay = session.GetType().GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(session) as Window;
-        if (overlay is null || !overlay.IsVisible)
-        {
-            return;
-        }
-
-        var hwnd = new WindowInteropHelper(overlay).Handle;
-        if (hwnd == IntPtr.Zero)
-        {
-            return;
-        }
-
-        // Never turn an overlay click-through in the middle of a captured drag. That transition was
-        // the core regression: the initial click could land, then the first mouse move lost the
-        // overlay and the bar appeared frozen.
-        var dragging = ReadBool(overlay.GetType(), overlay, "_dragging");
-        var interactive = dragging || IsNearAdjustableBoundary(side, cursor, geometry);
-        SetTransparent(hwnd, !interactive);
-    }
-
-    private static bool IsNearAdjustableBoundary(EdgeSide side, NativePoint cursor, SessionGeometry geometry)
-    {
-        var horizontal = side is EdgeSide.Top or EdgeSide.Bottom;
-        var start = horizontal ? geometry.Left : geometry.Top;
-        var end = horizontal ? geometry.Right : geometry.Bottom;
-        var desired = side == EdgeSide.Top
-            ? start + Math.Max(0, end - start) / 4
-            : start + Math.Max(0, end - start) / 2;
-        var longPx = ScaleForDpi(64, geometry.Dpi);
-        var padding = ScaleForDpi(8, geometry.Dpi);
-        var half = longPx / 2;
-        var min = start + half + padding;
-        var max = end - half - padding;
-        var center = min <= max ? Math.Clamp(desired, min, max) : start + Math.Max(0, end - start) / 2;
-        var along = horizontal ? cursor.X : cursor.Y;
-        var boundary = side switch
-        {
-            EdgeSide.Top => geometry.Top + geometry.TopThickness,
-            EdgeSide.Bottom => geometry.Bottom - geometry.BottomThickness,
-            EdgeSide.Left => geometry.Left + geometry.LeftThickness,
-            _ => geometry.Right - geometry.RightThickness
-        };
-        var cross = horizontal ? cursor.Y : cursor.X;
-        var radius = ScaleForDpi(horizontal ? TopInteractiveBandDip : OtherInteractiveBandDip, geometry.Dpi);
-        return along >= start && along < end &&
-               Math.Abs(along - center) <= ScaleForDpi(HandleHalfLengthDip, geometry.Dpi) &&
-               Math.Abs(cross - boundary) <= radius;
-    }
-
-    private void SetTransparent(IntPtr hwnd, bool transparent)
-    {
-        if (_transparentState.TryGetValue(hwnd, out var previous) && previous == transparent)
-        {
-            return;
-        }
-
-        var style = GetWindowLongPtr(hwnd, GwlExStyle).ToInt64();
-        var next = transparent ? style | WsExTransparent : style & ~WsExTransparent;
-        if (next != style)
-        {
-            _ = SetWindowLongPtr(hwnd, GwlExStyle, new IntPtr(next));
-
-            // SetWindowLongPtr can leave extended-style state cached. Force a non-moving,
-            // non-sizing frame refresh so the hit-test behavior changes before the user's click.
-            _ = SetWindowPos(
-                hwnd,
-                IntPtr.Zero,
-                0,
-                0,
-                0,
-                0,
-                SwpNoMove | SwpNoSize | SwpNoZOrder | SwpNoActivate | SwpFrameChanged | SwpNoOwnerZOrder);
-        }
-
-        _transparentState[hwnd] = transparent;
-    }
-
-    private void PruneDeadOverlayState()
-    {
-        foreach (var hwnd in _transparentState.Keys.ToArray())
-        {
-            if (!IsWindow(hwnd))
-            {
-                _transparentState.Remove(hwnd);
-            }
-        }
-    }
-
-    private object? GetSessions()
-        => _service is null ? null : _sessionsField?.GetValue(_service);
-
-    private bool TryGetSession(IntPtr hwnd, out object session)
-    {
-        session = null!;
-        if (GetSessions() is not IDictionary sessions || !sessions.Contains(hwnd))
-        {
-            return false;
-        }
-
-        session = sessions[hwnd]!;
-        return session is not null;
-    }
-
-    private static bool TryReadGeometry(object session, out SessionGeometry geometry)
-    {
-        geometry = default;
-        try
-        {
-            var type = session.GetType();
-            var rect = type.GetField("_targetRect", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(session);
-            if (rect is null)
-            {
-                return false;
-            }
-
-            var rectType = rect.GetType();
-            var left = ReadRect(rectType, rect, "Left");
-            var top = ReadRect(rectType, rect, "Top");
-            var right = ReadRect(rectType, rect, "Right");
-            var bottom = ReadRect(rectType, rect, "Bottom");
-            var width = right - left;
-            var height = bottom - top;
-            if (width <= 0 || height <= 0)
-            {
-                return false;
-            }
-
-            geometry = new SessionGeometry(
-                left,
-                top,
-                right,
-                bottom,
-                width,
-                height,
-                ReadInt(type, session, "_minimumThickness"),
-                ReadInt(type, session, "_topThickness"),
-                ReadInt(type, session, "_rightThickness"),
-                ReadInt(type, session, "_bottomThickness"),
-                ReadInt(type, session, "_leftThickness"),
-                ReadUInt(type, session, "_dpi"));
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    private static int ReadRect(Type type, object instance, string name)
-        => (int)(type.GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(instance) ?? 0);
-
-    private static int ReadInt(Type type, object instance, string name)
-        => Convert.ToInt32(type.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(instance) ?? 0);
-
-    private static uint ReadUInt(Type type, object instance, string name)
-        => Convert.ToUInt32(type.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(instance) ?? 96u);
-
-    private static bool ReadBool(Type type, object instance, string name)
-        => Convert.ToBoolean(type.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(instance) ?? false);
-
-    private static void SetInt(Type type, object instance, string name, int value)
-        => type.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)?.SetValue(instance, value);
 
     private static double Ratio(int value, int dimension)
         => Math.Clamp((double)Math.Max(0, value) / Math.Max(1, dimension), 0.0, 1.0);
 
     private static int Scale(double ratio, int dimension, int minimum)
         => Math.Clamp((int)Math.Round(dimension * ratio), Math.Max(1, minimum), Math.Max(Math.Max(1, minimum), dimension));
-
-    private static int ScaleForDpi(int dip, uint dpi)
-        => Math.Max(1, (int)Math.Round(dip * Math.Max(96u, dpi) / 96.0));
 
     private sealed class EdgeCoverTemplate
     {
@@ -387,98 +127,6 @@ public sealed class EdgeCoverTemplateCoordinator : IDisposable
 
     public void Dispose()
     {
-        if (_disposed)
-        {
-            return;
-        }
-
         _disposed = true;
-        _inputTimer.Stop();
-        _inputTimer.Tick -= InputTimer_Tick;
-
-        // Restore normal overlay styles before detaching. This shared coordinator normally lives
-        // for the process lifetime, but cleanup must never strand helper windows in transparent mode.
-        foreach (var hwnd in _transparentState.Keys.ToArray())
-        {
-            try
-            {
-                if (IsWindow(hwnd))
-                {
-                    SetTransparent(hwnd, false);
-                }
-            }
-            catch
-            {
-            }
-        }
-
-        _transparentState.Clear();
-        _service = null;
     }
-
-    private enum EdgeSide
-    {
-        Top,
-        Right,
-        Bottom,
-        Left
-    }
-
-    private readonly record struct SessionGeometry(
-        int Left,
-        int Top,
-        int Right,
-        int Bottom,
-        int Width,
-        int Height,
-        int MinimumThickness,
-        int TopThickness,
-        int RightThickness,
-        int BottomThickness,
-        int LeftThickness,
-        uint Dpi);
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct NativePoint
-    {
-        public int X;
-        public int Y;
-    }
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool GetCursorPos(out NativePoint point);
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool IsWindow(IntPtr hwnd);
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool SetWindowPos(
-        IntPtr hwnd,
-        IntPtr insertAfter,
-        int x,
-        int y,
-        int width,
-        int height,
-        uint flags);
-
-    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
-    private static extern IntPtr GetWindowLongPtr64(IntPtr hwnd, int index);
-
-    [DllImport("user32.dll", EntryPoint = "GetWindowLongW")]
-    private static extern int GetWindowLong32(IntPtr hwnd, int index);
-
-    private static IntPtr GetWindowLongPtr(IntPtr hwnd, int index)
-        => IntPtr.Size == 8 ? GetWindowLongPtr64(hwnd, index) : new IntPtr(GetWindowLong32(hwnd, index));
-
-    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
-    private static extern IntPtr SetWindowLongPtr64(IntPtr hwnd, int index, IntPtr value);
-
-    [DllImport("user32.dll", EntryPoint = "SetWindowLongW")]
-    private static extern int SetWindowLong32(IntPtr hwnd, int index, int value);
-
-    private static IntPtr SetWindowLongPtr(IntPtr hwnd, int index, IntPtr value)
-        => IntPtr.Size == 8 ? SetWindowLongPtr64(hwnd, index, value) : new IntPtr(SetWindowLong32(hwnd, index, value.ToInt32()));
 }

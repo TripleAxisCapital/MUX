@@ -15,6 +15,10 @@ namespace MUX.App.Services;
 /// the adjustable edge from either inside the target window or from the surrounding desktop,
 /// click-drag anywhere in that proximity band, and resize the black cover directly.
 /// </summary>
+public readonly record struct EdgeCoverGeometry(
+    int Width, int Height, int MinimumThickness,
+    int TopThickness, int RightThickness, int BottomThickness, int LeftThickness);
+
 public sealed class EnhancedEdgeCoverService : IDisposable
 {
     private const int DwmwaExtendedFrameBounds = 9;
@@ -24,6 +28,7 @@ public sealed class EnhancedEdgeCoverService : IDisposable
 
     private readonly Dictionary<IntPtr, CoverSession> _sessions = new();
     private readonly DispatcherTimer _timer;
+    private readonly DispatcherTimer _inputTimer;
     private bool _globallyVisible = true;
     private bool _disposed;
 
@@ -35,6 +40,13 @@ public sealed class EnhancedEdgeCoverService : IDisposable
         };
         _timer.Tick += Timer_Tick;
         _timer.Start();
+
+        _inputTimer = new DispatcherTimer(DispatcherPriority.Input)
+        {
+            Interval = TimeSpan.FromMilliseconds(16)
+        };
+        _inputTimer.Tick += InputTimer_Tick;
+        _inputTimer.Start();
     }
 
     public static EnhancedEdgeCoverService Shared => SharedInstance.Value;
@@ -46,6 +58,26 @@ public sealed class EnhancedEdgeCoverService : IDisposable
 
     public bool IsEnabledForWindow(IntPtr hwnd)
         => hwnd != IntPtr.Zero && _sessions.ContainsKey(hwnd);
+
+    // Typed template API: never access cover session fields with reflection.
+    public bool TryGetCoverGeometry(IntPtr hwnd, out EdgeCoverGeometry geometry)
+    {
+        geometry = default;
+        return !_disposed && _sessions.TryGetValue(hwnd, out var session) &&
+               session.TryGetGeometry(out geometry);
+    }
+
+    public bool TrySetCoverThicknesses(IntPtr hwnd, int top, int right, int bottom, int left)
+    {
+        if (_disposed || !_sessions.TryGetValue(hwnd, out var session) ||
+            !session.SetThicknesses(top, right, bottom, left))
+        {
+            return false;
+        }
+
+        RaiseChanged();
+        return true;
+    }
 
     /// <summary>
     /// Globally hides or shows every configured edge-cover session without destroying the session
@@ -145,6 +177,21 @@ public sealed class EnhancedEdgeCoverService : IDisposable
         }
     }
 
+    private void InputTimer_Tick(object? sender, EventArgs e)
+    {
+        if (_disposed || _sessions.Count == 0 || TryCursor() is not NativePoint point)
+        {
+            return;
+        }
+
+        // Handle transparency in the owning cover service, without reflection or
+        // repeated native frame changes anywhere outside a narrow resize handle.
+        foreach (var session in _sessions.Values.ToArray())
+        {
+            session.UpdateInput(point);
+        }
+    }
+
     private void Timer_Tick(object? sender, EventArgs e)
     {
         if (_disposed || _sessions.Count == 0)
@@ -223,6 +270,8 @@ public sealed class EnhancedEdgeCoverService : IDisposable
         _disposed = true;
         _timer.Stop();
         _timer.Tick -= Timer_Tick;
+        _inputTimer.Stop();
+        _inputTimer.Tick -= InputTimer_Tick;
 
         foreach (var session in _sessions.Values.ToArray())
         {
@@ -326,6 +375,42 @@ public sealed class EnhancedEdgeCoverService : IDisposable
             return true;
         }
 
+        public bool TryGetGeometry(out EdgeCoverGeometry geometry)
+        {
+            geometry = default;
+            if (_disposed || !_initialized || _targetRect.Width <= 0 || _targetRect.Height <= 0)
+            {
+                return false;
+            }
+
+            geometry = new EdgeCoverGeometry(_targetRect.Width, _targetRect.Height, _minimumThickness,
+                _topThickness, _rightThickness, _bottomThickness, _leftThickness);
+            return true;
+        }
+
+        public bool SetThicknesses(int top, int right, int bottom, int left)
+        {
+            if (_disposed || !_initialized)
+            {
+                return false;
+            }
+
+            _topThickness = top;
+            _rightThickness = right;
+            _bottomThickness = bottom;
+            _leftThickness = left;
+            ClampThicknesses();
+            return Refresh(TryCursor(), _globallyVisible);
+        }
+
+        public void UpdateInput(NativePoint cursor)
+        {
+            _top.SetInputForCursor(cursor, _globallyVisible);
+            _right.SetInputForCursor(cursor, _globallyVisible);
+            _bottom.SetInputForCursor(cursor, _globallyVisible);
+            _left.SetInputForCursor(cursor, _globallyVisible);
+        }
+
         private int GetThickness(EdgeSide side)
             => side switch
             {
@@ -396,6 +481,10 @@ public sealed class EnhancedEdgeCoverService : IDisposable
     {
         private const int WmMouseActivate = 0x0021;
         private const int WmNcHitTest = 0x0084;
+        private const int GwlExStyle = -20;
+        private const long WsExTransparent = 0x00000020L;
+        private const uint SwpNoMove = 0x0002;
+        private const uint SwpFrameChanged = 0x0020;
         private const int MaNoActivate = 3;
         private const int HtClient = 1;
         private const int HtTransparent = -1;
@@ -421,6 +510,7 @@ public sealed class EnhancedEdgeCoverService : IDisposable
         private int _hoverRadius;
         private uint _dpi = 96;
         private bool _hot;
+        private bool _inputTransparent;
         private bool _dragging;
         private NativePoint _dragStart;
         private int _dragStartThickness;
@@ -511,6 +601,9 @@ public sealed class EnhancedEdgeCoverService : IDisposable
             var hwnd = new WindowInteropHelper(this).Handle;
             _source = HwndSource.FromHwnd(hwnd);
             _source?.AddHook(WndProc);
+            // Newly shown covers must be click-through even before the first
+            // input-timer tick; only the explicit handle can ever be armed.
+            SetInputTransparent(true);
         }
 
         protected override void OnClosed(EventArgs e)
@@ -539,6 +632,41 @@ public sealed class EnhancedEdgeCoverService : IDisposable
             }
 
             return IntPtr.Zero;
+        }
+
+        public void SetInputForCursor(NativePoint cursor, bool globallyVisible)
+        {
+            if (_disposed || !_shown)
+            {
+                return;
+            }
+
+            SetInputTransparent(!globallyVisible || (!_dragging && !IsInteractivePoint(cursor)));
+        }
+
+        private void SetInputTransparent(bool transparent)
+        {
+            if (_inputTransparent == transparent)
+            {
+                return;
+            }
+
+            var hwnd = new WindowInteropHelper(this).Handle;
+            if (hwnd == IntPtr.Zero)
+            {
+                return;
+            }
+
+            var style = GetWindowLongPtr(hwnd, GwlExStyle).ToInt64();
+            var next = transparent ? style | WsExTransparent : style & ~WsExTransparent;
+            if (style != next)
+            {
+                _ = SetWindowLongPtr(hwnd, GwlExStyle, new IntPtr(next));
+                _ = SetWindowPos(hwnd, IntPtr.Zero, 0, 0, 0, 0,
+                    SwpNoMove | SwpNoSize | SwpNoZOrder | SwpNoActivate | SwpFrameChanged | SwpNoOwnerZOrder);
+            }
+
+            _inputTransparent = transparent;
         }
 
         public void Update(NativeRect targetRect, int thickness, uint dpi, NativePoint? cursor)
@@ -744,6 +872,7 @@ public sealed class EnhancedEdgeCoverService : IDisposable
 
             _dragging = true;
             _dragStartThickness = _getThickness();
+            SetInputTransparent(false);
             CaptureMouse();
             SetHot(true);
             e.Handled = true;
@@ -795,6 +924,8 @@ public sealed class EnhancedEdgeCoverService : IDisposable
                 return;
             }
 
+            EndDrag();
+            SetInputTransparent(true);
             _hot = false;
             _handle.BeginAnimation(OpacityProperty, null);
             _handle.Opacity = 0;
@@ -883,6 +1014,24 @@ public sealed class EnhancedEdgeCoverService : IDisposable
                 Y = unchecked((short)((value >> 16) & 0xFFFF))
             };
         }
+
+        [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+        private static extern IntPtr GetWindowLongPtr64(IntPtr hwnd, int index);
+
+        [DllImport("user32.dll", EntryPoint = "GetWindowLongW")]
+        private static extern int GetWindowLong32(IntPtr hwnd, int index);
+
+        private static IntPtr GetWindowLongPtr(IntPtr hwnd, int index)
+            => IntPtr.Size == 8 ? GetWindowLongPtr64(hwnd, index) : new IntPtr(GetWindowLong32(hwnd, index));
+
+        [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
+        private static extern IntPtr SetWindowLongPtr64(IntPtr hwnd, int index, IntPtr value);
+
+        [DllImport("user32.dll", EntryPoint = "SetWindowLongW")]
+        private static extern int SetWindowLong32(IntPtr hwnd, int index, int value);
+
+        private static IntPtr SetWindowLongPtr(IntPtr hwnd, int index, IntPtr value)
+            => IntPtr.Size == 8 ? SetWindowLongPtr64(hwnd, index, value) : new IntPtr(SetWindowLong32(hwnd, index, value.ToInt32()));
 
         [DllImport("user32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]

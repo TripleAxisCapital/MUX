@@ -266,7 +266,10 @@ public sealed class ReliableWindowLinkService : IDisposable
                     return;
                 }
 
-                _dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() =>
+                // Location hooks are advisory. Running each at Input priority
+                // before a render can starve the drag loop and the top-bar
+                // proximity animation on desktops with many moving windows.
+                _dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
                 {
                     _pendingLocationEvents.TryRemove(hwnd, out _);
                     HandleEvent(eventType, hwnd);
@@ -321,7 +324,8 @@ public sealed class ReliableWindowLinkService : IDisposable
             return;
         }
 
-        if (eventType != EventObjectLocationChange || group.Applying || group.IsSyntheticSuppressed(hwnd))
+        if (eventType != EventObjectLocationChange || group.Applying ||
+            (hwnd != group.ActiveLeader && group.IsSyntheticSuppressed(hwnd)))
         {
             return;
         }
@@ -346,7 +350,9 @@ public sealed class ReliableWindowLinkService : IDisposable
         }
 
         group.ActiveLeader = leader;
+        group.SyntheticUntil.Remove(leader);
         group.Resizing = false;
+        group.LastInteractiveApplyUtc = DateTime.MinValue;
         group.PendingProgrammaticSource = IntPtr.Zero;
         group.DragStartVisual.Clear();
         foreach (var member in group.Members.ToArray())
@@ -393,6 +399,11 @@ public sealed class ReliableWindowLinkService : IDisposable
                     return;
                 }
 
+                if (DateTime.UtcNow - group.LastInteractiveApplyUtc < TimeSpan.FromMilliseconds(16))
+                {
+                    return;
+                }
+                group.LastInteractiveApplyUtc = DateTime.UtcNow;
                 ApplyInteractiveSnapshot(group, finalPass: false);
             }));
         }
@@ -420,6 +431,11 @@ public sealed class ReliableWindowLinkService : IDisposable
             return;
         }
 
+        if (group.Resizing)
+        {
+            return;
+        }
+
         var deltaX = leaderNow.Left - leaderStart.Left;
         var deltaY = leaderNow.Top - leaderStart.Top;
 
@@ -430,10 +446,12 @@ public sealed class ReliableWindowLinkService : IDisposable
             deltaY += snap.Y;
         }
 
-        ApplySnapshotPositions(group, deltaX, deltaY, includeLeader: finalPass && (deltaX != leaderNow.Left - leaderStart.Left || deltaY != leaderNow.Top - leaderStart.Top));
+        ApplySnapshotPositions(group, deltaX, deltaY,
+            includeLeader: finalPass && (deltaX != leaderNow.Left - leaderStart.Left || deltaY != leaderNow.Top - leaderStart.Top),
+            finalPass: finalPass);
     }
 
-    private void ApplySnapshotPositions(LinkedGroup group, int deltaX, int deltaY, bool includeLeader)
+    private void ApplySnapshotPositions(LinkedGroup group, int deltaX, int deltaY, bool includeLeader, bool finalPass)
     {
         var moves = new List<WindowMove>();
         foreach (var member in group.Members.ToArray())
@@ -445,12 +463,20 @@ public sealed class ReliableWindowLinkService : IDisposable
                 continue;
             }
 
+            var desiredLeft = start.Left + deltaX;
+            var desiredTop = start.Top + deltaY;
+            // DWM/Win32 borders can round by one physical pixel on different
+            // window frameworks. Avoid vibrating a follower back and forth
+            // for micro-corrections while the native drag is active; the
+            // mouse-up transaction always makes the final fit exact.
+            if (!finalPass && Math.Abs(desiredLeft - visual.Left) <= 2 &&
+                Math.Abs(desiredTop - visual.Top) <= 2)
+            {
+                continue;
+            }
+
             moves.Add(WindowMove.FromVisualDestination(
-                member,
-                raw,
-                visual,
-                start.Left + deltaX,
-                start.Top + deltaY));
+                member, raw, visual, desiredLeft, desiredTop));
         }
 
         ApplyMoves(group, moves);
@@ -868,6 +894,7 @@ public sealed class ReliableWindowLinkService : IDisposable
         public bool Resizing { get; set; }
         public bool InteractiveSyncScheduled { get; set; }
         public bool ProgrammaticSyncScheduled { get; set; }
+        public DateTime LastInteractiveApplyUtc { get; set; } = DateTime.MinValue;
 
         public void SuppressSynthetic(IntPtr hwnd, TimeSpan duration)
             => SyntheticUntil[hwnd] = DateTime.UtcNow + duration;

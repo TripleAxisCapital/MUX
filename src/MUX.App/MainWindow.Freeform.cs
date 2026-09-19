@@ -35,6 +35,9 @@ public partial class MainWindow
         Loaded += MainWindow_FreeformLoaded;
         Closed += MainWindow_FreeformClosed;
 
+        // Freeform snapping and linked-window management must remain alive even when
+        // every monitor has its caption pill disabled.
+        ReliableWindowLinkService.Shared.GroupSnappingEnabled = MagneticSnapService.Shared.Enabled;
         _captionPillController = new DisplayFilteredCaptionPillController(
             () => new DisplaySizingSnapshot(_state.Displays, _state.ActiveDisplayDeviceName),
             () => _state.CaptionPillDisabledDisplayDeviceNames);

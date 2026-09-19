@@ -13,6 +13,10 @@ public sealed record DisplaySizingSnapshot(IReadOnlyList<DisplayProfile> Display
 public sealed class CaptionResizePillService : IDisposable
 {
     private const int GaRoot = 2;
+    private const int GwlExStyle = -20;
+    private const long WsExToolWindow = 0x00000080L;
+    private const long WsThickFrame = 0x00040000L;
+    private const int DwmwaCloaked = 14;
     private const int GwlStyle = -16;
     private const long WsCaption = 0x00C00000L;
     private const long WsSysMenu = 0x00080000L;
@@ -174,27 +178,31 @@ public sealed class CaptionResizePillService : IDisposable
         captionHeight = 0;
 
         var hit = WindowFromPoint(cursor);
-        if (hit == IntPtr.Zero)
+        var root = hit == IntPtr.Zero ? IntPtr.Zero : GetAncestor(hit, GaRoot);
+        if (!IsCaptionCandidate(root, cursor, out bounds))
         {
-            return false;
+            // Topmost helper windows can sit over the actual caption. Walk top-level
+            // windows in Z-order and skip our own overlays rather than rejecting the hit.
+            root = IntPtr.Zero;
+            EnumWindows((candidate, _) =>
+            {
+                if (!IsCaptionCandidate(candidate, cursor, out var candidateBounds))
+                {
+                    return true;
+                }
+
+                root = candidate;
+                bounds = candidateBounds;
+                return false;
+            }, IntPtr.Zero);
+            if (root == IntPtr.Zero)
+            {
+                return false;
+            }
         }
 
-        hwnd = GetAncestor(hit, GaRoot);
-        if (hwnd == IntPtr.Zero || hwnd == _pill.NativeHandle || !IsWindow(hwnd) || !IsWindowVisible(hwnd) || IsIconic(hwnd))
-        {
-            return false;
-        }
-
+        hwnd = root;
         var style = GetWindowStyle(hwnd);
-        if ((style & WsCaption) != WsCaption || (style & WsSysMenu) == 0)
-        {
-            return false;
-        }
-
-        if (!TryGetVisualBounds(hwnd, out bounds) || bounds.Width < 180 || bounds.Height < 100)
-        {
-            return false;
-        }
 
         dpi = GetDpiForWindow(hwnd);
         if (dpi == 0)
@@ -217,6 +225,39 @@ public sealed class CaptionResizePillService : IDisposable
 
         return cursor.X >= hotLeft && cursor.X <= hotRight && cursor.Y >= hotTop && cursor.Y <= hotBottom;
     }
+
+    private bool IsCaptionCandidate(IntPtr hwnd, NativePoint cursor, out NativeRect bounds)
+    {
+        bounds = default;
+        if (hwnd == IntPtr.Zero || hwnd == _pill.NativeHandle ||
+            !IsWindow(hwnd) || !IsWindowVisible(hwnd) || IsIconic(hwnd))
+        {
+            return false;
+        }
+
+        GetWindowThreadProcessId(hwnd, out var processId);
+        if (processId == 0 || processId == Environment.ProcessId ||
+            (GetWindowExStyle(hwnd) & WsExToolWindow) != 0)
+        {
+            return false;
+        }
+
+        var style = GetWindowStyle(hwnd);
+        // Electron/VS Code and other custom-caption windows can omit WS_CAPTION.
+        // Their regular system menu or resizable top-level frame still qualifies.
+        if ((style & (WsCaption | WsSysMenu | WsThickFrame)) == 0 ||
+            (DwmGetWindowAttribute(hwnd, DwmwaCloaked, out int cloaked, sizeof(int)) == 0 && cloaked != 0) ||
+            !TryGetVisualBounds(hwnd, out bounds) || bounds.Width < 180 || bounds.Height < 100)
+        {
+            return false;
+        }
+
+        return cursor.X >= bounds.Left && cursor.X < bounds.Right &&
+               cursor.Y >= bounds.Top && cursor.Y < bounds.Bottom;
+    }
+
+    private static long GetWindowExStyle(IntPtr hwnd)
+        => IntPtr.Size == 8 ? GetWindowLongPtr64(hwnd, GwlExStyle).ToInt64() : GetWindowLong32(hwnd, GwlExStyle);
 
     private void RefreshCurrentTarget()
     {
@@ -423,6 +464,9 @@ public sealed class CaptionResizePillService : IDisposable
         {
             left = targetLeft;
         }
+        // Narrow target windows must not push the menu off the physical display.
+        left = Math.Clamp(left, monitorInfo.Work.Left + edgePadding,
+            Math.Max(monitorInfo.Work.Left + edgePadding, monitorInfo.Work.Right - pillBounds.Width - edgePadding));
 
         var top = targetBounds.Top - pillBounds.Height - gap;
         if (top < monitorInfo.Work.Top + edgePadding)
@@ -603,6 +647,15 @@ public sealed class CaptionResizePillService : IDisposable
     [DllImport("user32.dll")]
     private static extern IntPtr GetAncestor(IntPtr hwnd, int flags);
 
+    private delegate bool EnumWindowsDelegate(IntPtr hwnd, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool EnumWindows(EnumWindowsDelegate callback, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
+
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool IsWindow(IntPtr hwnd);
@@ -637,6 +690,9 @@ public sealed class CaptionResizePillService : IDisposable
 
     [DllImport("dwmapi.dll")]
     private static extern int DwmGetWindowAttribute(IntPtr hwnd, int attribute, out NativeRect value, int size);
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmGetWindowAttribute(IntPtr hwnd, int attribute, out int value, int size);
 
     [DllImport("user32.dll")]
     private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);

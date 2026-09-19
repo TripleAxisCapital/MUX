@@ -19,8 +19,8 @@ public partial class CaptionResizePillWindow
     {
         if (_magneticSnapService is null)
         {
-            _magneticSnappingEnabled = LoadMagneticSnappingEnabled();
-            _magneticSnapService = new MagneticSnapService(_magneticSnappingEnabled);
+            _magneticSnapService = MagneticSnapService.Shared;
+            _magneticSnappingEnabled = _magneticSnapService.Enabled;
         }
 
         UpdateMagnetVisual();
@@ -41,7 +41,8 @@ public partial class CaptionResizePillWindow
         DisposeSizeLockControls();
         DisposeEdgeCoverControls();
 
-        _magneticSnapService?.Dispose();
+        // The magnet is an application-level service. Recreating a pill when crossing
+        // displays must never remove snapping hooks or reset an in-progress drag.
         _magneticSnapService = null;
     }
 

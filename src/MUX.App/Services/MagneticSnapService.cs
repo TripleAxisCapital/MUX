@@ -1,4 +1,6 @@
 using System.Runtime.InteropServices;
+using System.Text.Json;
+using System.Threading;
 using System.Windows;
 using System.Windows.Threading;
 
@@ -29,6 +31,31 @@ public sealed class MagneticSnapService : IDisposable
     private const uint SwpNoOwnerZOrder = 0x0200;
     private const int ResizeTolerancePx = 2;
     private const int VerificationPasses = 3;
+    private static readonly Lazy<MagneticSnapService> SharedInstance = new(() => new MagneticSnapService(ReadSavedPreference()));
+
+    public static MagneticSnapService Shared => SharedInstance.Value;
+
+    private static bool ReadSavedPreference()
+    {
+        try
+        {
+            var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MUX", "magnetic-snapping.json");
+            if (File.Exists(path))
+            {
+                using var document = JsonDocument.Parse(File.ReadAllText(path));
+                if (document.RootElement.TryGetProperty("Enabled", out var enabled) &&
+                    (enabled.ValueKind == JsonValueKind.True || enabled.ValueKind == JsonValueKind.False))
+                {
+                    return enabled.GetBoolean();
+                }
+            }
+        }
+        catch
+        {
+            // Preferences must not prevent normal window management.
+        }
+        return true;
+    }
 
     private readonly WinEventDelegate _eventDelegate;
     private readonly Dispatcher _dispatcher;
@@ -38,6 +65,7 @@ public sealed class MagneticSnapService : IDisposable
     private IntPtr _movingHwnd;
     private NativeRect _startRawRect;
     private bool _resizeDetected;
+    private int _locationUpdateQueued;
     private SnapAnchor? _horizontalAnchor;
     private SnapAnchor? _verticalAnchor;
     private NativeRect? _lastAppliedRawRect;
@@ -107,9 +135,24 @@ public sealed class MagneticSnapService : IDisposable
             return;
         }
 
-        _dispatcher.BeginInvoke(
-            DispatcherPriority.Send,
-            new Action(() => HandleEvent(eventType, hwnd)));
+        // Coalesce high-rate native move events; queued positions become stale when each
+        // SetWindowPos generates more location events of its own.
+        if (eventType == EventObjectLocationChange)
+        {
+            if (Interlocked.Exchange(ref _locationUpdateQueued, 1) != 0)
+            {
+                return;
+            }
+
+            _dispatcher.BeginInvoke(DispatcherPriority.Render, new Action(() =>
+            {
+                Interlocked.Exchange(ref _locationUpdateQueued, 0);
+                HandleEvent(eventType, hwnd);
+            }));
+            return;
+        }
+
+        _dispatcher.BeginInvoke(DispatcherPriority.Send, new Action(() => HandleEvent(eventType, hwnd)));
     }
 
     private void HandleEvent(uint eventType, IntPtr hwnd)
@@ -160,7 +203,10 @@ public sealed class MagneticSnapService : IDisposable
     {
         ResetDrag();
 
-        if (!IsEligibleWindow(hwnd) || !TryGetWindowGeometry(hwnd, out var raw, out _))
+        // Linked groups have their own atomic position transaction and final group snap.
+        // Never let the independent-window magnet move an individual group member.
+        if (ReliableWindowLinkService.Shared.IsLinked(hwnd) ||
+            !IsEligibleWindow(hwnd) || !TryGetWindowGeometry(hwnd, out var raw, out _))
         {
             return;
         }
@@ -216,7 +262,12 @@ public sealed class MagneticSnapService : IDisposable
         }
 
         ApplyTranslation(hwnd, raw, deltaX, deltaY);
-        VerifyAndCorrectFlush(hwnd);
+        // Verify pixel-perfect alignment only on release: corrective SetWindowPos calls
+        // during Windows' native drag loop compete with cursor tracking and cause jitter.
+        if (finalPass)
+        {
+            VerifyAndCorrectFlush(hwnd);
+        }
     }
 
     private void ApplyTranslation(IntPtr hwnd, NativeRect raw, int deltaX, int deltaY)
@@ -232,15 +283,22 @@ public sealed class MagneticSnapService : IDisposable
             raw.Right + deltaX,
             raw.Bottom + deltaY);
 
-        _lastAppliedRawRect = adjusted;
-        SetWindowPos(
+        if (SetWindowPos(
             hwnd,
             IntPtr.Zero,
             adjusted.Left,
             adjusted.Top,
             0,
             0,
-            SwpNoSize | SwpNoZOrder | SwpNoActivate | SwpNoOwnerZOrder);
+            SwpNoSize | SwpNoZOrder | SwpNoActivate | SwpNoOwnerZOrder) &&
+            GetWindowRect(hwnd, out var actual))
+        {
+            _lastAppliedRawRect = actual;
+        }
+        else
+        {
+            _lastAppliedRawRect = null;
+        }
     }
 
     /// <summary>

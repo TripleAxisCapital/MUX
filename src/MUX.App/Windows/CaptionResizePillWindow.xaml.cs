@@ -77,6 +77,7 @@ public partial class CaptionResizePillWindow : Window
     private bool _aspectMenuOpen;
     private int? _editingFavoriteIndex;
     private long _visibilityAnimationVersion;
+    private bool _dismissing;
     private double _aspectWidth = 16;
     private double _aspectHeight = 9;
     private double _availableWidthDip = double.PositiveInfinity;
@@ -103,7 +104,13 @@ public partial class CaptionResizePillWindow : Window
     {
         var effectiveDpi = Math.Max(96u, dpi);
         var widthDip = targetWidthPx * 96.0 / effectiveDpi;
-        _availableWidthDip = Math.Max(MinimumPillWidth, widthDip - 8);
+        var available = Math.Max(MinimumPillWidth, widthDip - 8);
+        if (Math.Abs(available - _availableWidthDip) < 0.5)
+        {
+            return;
+        }
+
+        _availableWidthDip = available;
         SetPillWidth(CurrentDesiredWidth(), animate: false);
     }
 
@@ -145,8 +152,13 @@ public partial class CaptionResizePillWindow : Window
 
     public void Reveal()
     {
-        _visibilityAnimationVersion++;
+        if (IsVisible && !_dismissing)
+        {
+            return;
+        }
 
+        ++_visibilityAnimationVersion;
+        _dismissing = false;
         if (!IsVisible)
         {
             Opacity = 0;
@@ -164,11 +176,12 @@ public partial class CaptionResizePillWindow : Window
 
     public void Dismiss()
     {
-        if (!IsVisible)
+        if (!IsVisible || _dismissing)
         {
             return;
         }
 
+        _dismissing = true;
         var version = ++_visibilityAnimationVersion;
         var animation = new DoubleAnimation(Opacity, 0.0, DismissDuration)
         {
@@ -184,6 +197,7 @@ public partial class CaptionResizePillWindow : Window
 
             BeginAnimation(OpacityProperty, null);
             Opacity = 0;
+            _dismissing = false;
             Hide();
         };
 

@@ -36,6 +36,7 @@ public partial class CaptionResizePillWindow
 
     private void MagnetWindow_Closed(object? sender, EventArgs e)
     {
+        DisposeUtilityClusterLayout();
         DisposeAutoArrangeControls();
         DisposeWindowLinkControls();
         DisposeSizeLockControls();

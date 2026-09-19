@@ -1,25 +1,28 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Media.Effects;
 
 namespace MUX.App.Windows;
 
 public partial class CaptionResizePillWindow
 {
+    // Keep frequent actions in the pill, with the remaining controls in a clean
+    // secondary panel. The original buttons are moved, not recreated: all handlers,
+    // context menus, state indicators, and feature services remain intact.
     private const double UtilityCurrentSizeWidth = 46;
-    private const double UtilityButtonWidth = 24;
-    private const double UtilityGap = 3;
+    private const double UtilityButtonWidth = 32;
+    private const double UtilityGap = 4;
     private const double LegacyUtilityWidth = 92;
 
     private bool _utilityLayoutInstalled;
     private bool _correctingUtilityWidth;
     private double _utilityClusterWidth = LegacyUtilityWidth;
+    private Button? _moreButton;
+    private Popup? _utilityPopup;
 
-    /// <summary>
-    /// Runs once after every optional pill control has been created. Earlier feature partials used
-    /// progressively smaller 13-DIP buttons to stay inside the original utility slot; that is what
-    /// caused the clipped/squashed cluster in production. This gives every icon a real hit target,
-    /// keeps the physical-size readout legible, and lets FavoritesScroll absorb width pressure.
-    /// </summary>
     private void NormalizeUtilityClusterLayout()
     {
         if (MagnetButton.Parent is not Grid controlGrid)
@@ -27,53 +30,54 @@ public partial class CaptionResizePillWindow
             return;
         }
 
-        var buttons = new List<Button>();
-        AddIfPresent(buttons, MagnetButton);
-        AddIfPresent(buttons, _edgeCoverButton);
-        AddIfPresent(buttons, _edgeCoverTemplateButton);
-        AddIfPresent(buttons, _sizeLockButton);
-        AddIfPresent(buttons, _windowLinkButton);
-        AddIfPresent(buttons, _autoArrangeButton);
-
         var currentSizeBorder = controlGrid.Children
             .OfType<Border>()
             .FirstOrDefault(child => ReferenceEquals(child.Child, CurrentSizeText));
 
+        var primaryButtons = new List<Button> { MagnetButton };
+        if (_edgeCoverButton is not null)
+        {
+            primaryButtons.Add(_edgeCoverButton);
+        }
+
+        InstallAdvancedControls(controlGrid);
+        if (_moreButton is not null)
+        {
+            primaryButtons.Add(_moreButton);
+        }
+
         controlGrid.ColumnDefinitions.Clear();
         controlGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(UtilityCurrentSizeWidth) });
-
         if (currentSizeBorder is not null)
         {
             Grid.SetColumn(currentSizeBorder, 0);
             currentSizeBorder.Padding = new Thickness(4, 0, 4, 0);
         }
-        CurrentSizeText.FontSize = 9.4;
 
-        for (var index = 0; index < buttons.Count; index++)
+        CurrentSizeText.FontSize = 9.8;
+        for (var index = 0; index < primaryButtons.Count; index++)
         {
             controlGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(UtilityGap) });
             controlGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(UtilityButtonWidth) });
 
-            var button = buttons[index];
+            var button = primaryButtons[index];
             button.Width = UtilityButtonWidth;
             button.Height = 34;
-            button.Padding = new Thickness(3);
+            button.Padding = new Thickness(4);
             Grid.SetColumn(button, 2 + index * 2);
-
             if (button.Content is Viewbox viewbox)
             {
-                viewbox.Width = 14;
-                viewbox.Height = 14;
+                viewbox.Width = 15;
+                viewbox.Height = 15;
             }
         }
 
-        _utilityClusterWidth = UtilityCurrentSizeWidth + buttons.Count * (UtilityGap + UtilityButtonWidth);
+        _utilityClusterWidth = UtilityCurrentSizeWidth + primaryButtons.Count * (UtilityGap + UtilityButtonWidth);
         if (CollapsedPanel.ColumnDefinitions.Count > 6)
         {
             CollapsedPanel.ColumnDefinitions[6].Width = new GridLength(_utilityClusterWidth);
             CollapsedPanel.ColumnDefinitions[6].MinWidth = _utilityClusterWidth;
         }
-
         controlGrid.MinWidth = _utilityClusterWidth;
         controlGrid.HorizontalAlignment = HorizontalAlignment.Right;
 
@@ -82,22 +86,121 @@ public partial class CaptionResizePillWindow
             _utilityLayoutInstalled = true;
             LayoutModeChanged += UtilityLayout_LayoutModeChanged;
         }
-
         CorrectCollapsedUtilityWidth();
     }
 
-    private static void AddIfPresent(ICollection<Button> list, Button? button)
+    private void InstallAdvancedControls(Grid controlGrid)
     {
-        if (button is not null && !list.Contains(button))
+        if (_moreButton is not null)
         {
-            list.Add(button);
+            return;
+        }
+
+        var advanced = new (Button? Button, string Label)[]
+        {
+            (_edgeCoverTemplateButton, "Save black-bar template"),
+            (_sizeLockButton, "Lock window size"),
+            (_windowLinkButton, "Link windows"),
+            (_autoArrangeButton, "Auto arrange")
+        };
+        if (advanced.All(item => item.Button is null))
+        {
+            return;
+        }
+
+        var panel = new StackPanel();
+        foreach (var (button, label) in advanced)
+        {
+            if (button is null)
+            {
+                continue;
+            }
+
+            if (button.Parent is Panel previous)
+            {
+                previous.Children.Remove(button);
+            }
+
+            button.Width = 34;
+            button.Height = 34;
+            button.Padding = new Thickness(5);
+            button.Margin = new Thickness(0, 0, 10, 0);
+
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2) };
+            row.Children.Add(button);
+            row.Children.Add(new TextBlock
+            {
+                Text = label,
+                Foreground = new SolidColorBrush(Color.FromRgb(226, 226, 231)),
+                FontSize = 12,
+                VerticalAlignment = VerticalAlignment.Center
+            });
+            panel.Children.Add(row);
+        }
+
+        _moreButton = new Button
+        {
+            Content = "···",
+            ToolTip = "More window controls",
+            Width = UtilityButtonWidth,
+            Height = 34,
+            Padding = new Thickness(0),
+            FontSize = 16,
+            FontWeight = FontWeights.SemiBold
+        };
+        _moreButton.SetResourceReference(FrameworkElement.StyleProperty, "PillButton");
+        controlGrid.Children.Add(_moreButton);
+
+        _utilityPopup = new Popup
+        {
+            PlacementTarget = _moreButton,
+            Placement = PlacementMode.Bottom,
+            VerticalOffset = 9,
+            AllowsTransparency = true,
+            StaysOpen = false,
+            Child = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(26, 26, 30)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(62, 62, 68)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(15),
+                Padding = new Thickness(10),
+                Effect = new DropShadowEffect
+                {
+                    BlurRadius = 18,
+                    ShadowDepth = 4,
+                    Opacity = 0.35,
+                    Color = Colors.Black
+                },
+                Child = panel
+            }
+        };
+
+        // StaysOpen=false may dismiss the popup before Button.Click; handle a
+        // second click explicitly so the More button reliably closes the panel.
+        _moreButton.PreviewMouseLeftButtonDown += MoreButton_PreviewMouseLeftButtonDown;
+        _moreButton.Click += MoreButton_Click;
+    }
+
+    private void MoreButton_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (_utilityPopup?.IsOpen == true)
+        {
+            _utilityPopup.IsOpen = false;
+            e.Handled = true;
+        }
+    }
+
+    private void MoreButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_utilityPopup is not null)
+        {
+            _utilityPopup.IsOpen = true;
         }
     }
 
     private void UtilityLayout_LayoutModeChanged(object? sender, EventArgs e)
-    {
-        CorrectCollapsedUtilityWidth();
-    }
+        => CorrectCollapsedUtilityWidth();
 
     private void CorrectCollapsedUtilityWidth()
     {
@@ -107,14 +210,11 @@ public partial class CaptionResizePillWindow
         }
 
         var desired = CalculateCollapsedWidth() + (_utilityClusterWidth - LegacyUtilityWidth);
-        // Fixed controls must never be compressed. On a narrow target, favorites scroll horizontally
-        // first; the utility controls, Size, and ratio controls retain production-sized hit targets.
         var fixedFunctionalWidth = 16 + 58 + 6 + 58 + 6 + 6 + _utilityClusterWidth;
         var available = double.IsFinite(_availableWidthDip)
             ? Math.Max(_availableWidthDip, fixedFunctionalWidth)
             : desired;
         var constrained = Math.Max(MinimumPillWidth, Math.Min(desired, available));
-
         if (Math.Abs(Width - constrained) < 0.5)
         {
             return;
@@ -135,12 +235,18 @@ public partial class CaptionResizePillWindow
 
     private void DisposeUtilityClusterLayout()
     {
-        if (!_utilityLayoutInstalled)
+        _utilityPopup?.SetCurrentValue(Popup.IsOpenProperty, false);
+        if (_moreButton is not null)
         {
-            return;
+            _moreButton.PreviewMouseLeftButtonDown -= MoreButton_PreviewMouseLeftButtonDown;
+            _moreButton.Click -= MoreButton_Click;
         }
-
-        LayoutModeChanged -= UtilityLayout_LayoutModeChanged;
-        _utilityLayoutInstalled = false;
+        _utilityPopup = null;
+        _moreButton = null;
+        if (_utilityLayoutInstalled)
+        {
+            LayoutModeChanged -= UtilityLayout_LayoutModeChanged;
+            _utilityLayoutInstalled = false;
+        }
     }
 }

@@ -97,7 +97,7 @@ public partial class CaptionResizePillWindow : Window
     public event EventHandler? LayoutModeChanged;
 
     public IntPtr NativeHandle => new WindowInteropHelper(this).Handle;
-    public bool IsInteractionLocked => IsKeyboardFocusWithin || _favoriteMenuOpen || _aspectMenuOpen;
+    public bool IsInteractionLocked => IsKeyboardFocusWithin || _favoriteMenuOpen || _aspectMenuOpen || _utilityPopup?.IsOpen == true;
     public bool IsExpanded => _expanded;
 
     public void SetAvailableWidth(int targetWidthPx, uint dpi)
@@ -176,6 +176,11 @@ public partial class CaptionResizePillWindow : Window
 
     public void Dismiss()
     {
+        if (_utilityPopup is not null)
+        {
+            _utilityPopup.IsOpen = false;
+        }
+
         if (!IsVisible || _dismissing)
         {
             return;

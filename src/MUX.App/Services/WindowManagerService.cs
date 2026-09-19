@@ -63,6 +63,9 @@ public sealed class WindowManagerService : IDisposable
         RefreshOutlines();
     }
 
+    public bool IsZoneSnapActiveForCurrentGesture()
+        => _enabled && _snapOnDrag && (!_snapRequiresShift || IsShiftDown());
+
     public void SetSnapRequiresShift(bool requiresShift)
     {
         _snapRequiresShift = requiresShift;
@@ -218,7 +221,10 @@ public sealed class WindowManagerService : IDisposable
             {
                 TrackNormalWindow(hwnd, movedRect);
 
-                if (_snapOnDrag && (!_snapRequiresShift || IsShiftDown()))
+                // A linked formation must not be split by sizing only its leader
+                // to one zone. Its group service owns the formation's final snap.
+                if (IsZoneSnapActiveForCurrentGesture() &&
+                    !ReliableWindowLinkService.Shared.IsLinked(hwnd))
                 {
                     var zone = DisplayGeometry.FindBestZone(_display, _layout, movedRect);
                     if (zone is not null)

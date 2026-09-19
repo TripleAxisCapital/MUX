@@ -35,6 +35,16 @@ public sealed class MagneticSnapService : IDisposable
 
     public static MagneticSnapService Shared => SharedInstance.Value;
 
+    // The zone manager owns a Shift-snap / automatic zone snap gesture. Only one
+    // engine may reposition the dragged window on release.
+    public Func<bool>? ShouldYieldToZoneSnap { get; set; }
+
+    private bool ZoneSnapOwnsGesture()
+    {
+        try { return ShouldYieldToZoneSnap?.Invoke() == true; }
+        catch { return false; }
+    }
+
     private static bool ReadSavedPreference()
     {
         try
@@ -224,6 +234,13 @@ public sealed class MagneticSnapService : IDisposable
 
     private void ApplyMagnet(IntPtr hwnd, bool finalPass)
     {
+        if (ZoneSnapOwnsGesture())
+        {
+            _horizontalAnchor = null;
+            _verticalAnchor = null;
+            return;
+        }
+
         if (!TryGetWindowGeometry(hwnd, out var raw, out var visual))
         {
             return;

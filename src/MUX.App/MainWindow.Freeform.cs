@@ -37,7 +37,9 @@ public partial class MainWindow
 
         // Freeform snapping and linked-window management must remain alive even when
         // every monitor has its caption pill disabled.
-        ReliableWindowLinkService.Shared.GroupSnappingEnabled = MagneticSnapService.Shared.Enabled;
+        var magnet = MagneticSnapService.Shared;
+        magnet.ShouldYieldToZoneSnap = _windowManager.IsZoneSnapActiveForCurrentGesture;
+        ReliableWindowLinkService.Shared.GroupSnappingEnabled = magnet.Enabled;
         _captionPillController = new DisplayFilteredCaptionPillController(
             () => new DisplaySizingSnapshot(_state.Displays, _state.ActiveDisplayDeviceName),
             () => _state.CaptionPillDisabledDisplayDeviceNames);
@@ -290,6 +292,7 @@ public partial class MainWindow
 
         _captionPillController?.Dispose();
         _captionPillController = null;
+        MagneticSnapService.Shared.ShouldYieldToZoneSnap = null;
     }
 
     private void EngineToggleButton_FreeformStateChanged(object sender, RoutedEventArgs e)

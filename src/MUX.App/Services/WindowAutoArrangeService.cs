@@ -133,7 +133,8 @@ public sealed class WindowAutoArrangeService
         if (handles.Count > 1)
         {
             var linkService = ReliableWindowLinkService.Shared;
-            linkService.GroupSnappingEnabled = true;
+            // Auto-arrange must respect the user's saved magnet preference.
+            linkService.GroupSnappingEnabled = MagneticSnapService.Shared.Enabled;
             linked = linkService.ToggleLink(handles[0]);
         }
 

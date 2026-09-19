@@ -121,8 +121,8 @@ internal sealed class SnapPreviewOverlay : IDisposable
         private const long WsExToolWindow = 0x00000080L;
         private const long WsExNoActivate = 0x08000000L;
         private const uint SwpNoActivate = 0x0010;
+        private const uint SwpNoZOrder = 0x0004;
         private const uint SwpNoOwnerZOrder = 0x0200;
-        private static readonly IntPtr HwndTopmost = new(-1);
 
         private readonly ScaleTransform _scale;
         private readonly bool _vertical;
@@ -214,8 +214,8 @@ internal sealed class SnapPreviewOverlay : IDisposable
             height = Math.Max(1, height);
             if (!_positioned || _x != x || _y != y || _width != width || _height != height)
             {
-                _ = SetWindowPos(hwnd, HwndTopmost, x, y, width, height,
-                    SwpNoActivate | SwpNoOwnerZOrder);
+                _ = SetWindowPos(hwnd, IntPtr.Zero, x, y, width, height,
+                    SwpNoActivate | SwpNoZOrder | SwpNoOwnerZOrder);
                 _x = x;
                 _y = y;
                 _width = width;

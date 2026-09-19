@@ -12,9 +12,10 @@ public partial class CaptionResizePillWindow
     // secondary panel. The original buttons are moved, not recreated: all handlers,
     // context menus, state indicators, and feature services remain intact.
     private const double UtilityCurrentSizeWidth = 46;
-    private const double UtilityButtonWidth = 32;
+    private const double UtilityButtonWidth = 29;
     private const double UtilityGap = 4;
     private const double LegacyUtilityWidth = 92;
+    private const double CollapsedFixedWidth = 16 + 58 + 6 + 58 + 6 + 6;
 
     private bool _utilityLayoutInstalled;
     private bool _correctingUtilityWidth;
@@ -34,7 +35,10 @@ public partial class CaptionResizePillWindow
             .OfType<Border>()
             .FirstOrDefault(child => ReferenceEquals(child.Child, CurrentSizeText));
 
-        var primaryButtons = new List<Button> { MagnetButton };
+        // Keep the floating pill compact: size, ratio, current size, black bars
+        // and a single More control. The magnet lives in More with the less
+        // frequently used actions; no feature is removed.
+        var primaryButtons = new List<Button>();
         if (_edgeCoverButton is not null)
         {
             primaryButtons.Add(_edgeCoverButton);
@@ -63,7 +67,7 @@ public partial class CaptionResizePillWindow
             var button = primaryButtons[index];
             button.Width = UtilityButtonWidth;
             button.Height = 34;
-            button.Padding = new Thickness(4);
+            button.Padding = new Thickness(5);
             Grid.SetColumn(button, 2 + index * 2);
             if (button.Content is Viewbox viewbox)
             {
@@ -98,7 +102,8 @@ public partial class CaptionResizePillWindow
 
         var advanced = new (Button? Button, string Label)[]
         {
-            (_edgeCoverTemplateButton, "Save black-bar template"),
+            (MagnetButton, "Magnetic snapping"),
+            (_edgeCoverTemplateButton, "Black-bar template"),
             (_sizeLockButton, "Lock window size"),
             (_windowLinkButton, "Link windows"),
             (_autoArrangeButton, "Auto arrange")
@@ -121,12 +126,12 @@ public partial class CaptionResizePillWindow
                 previous.Children.Remove(button);
             }
 
-            button.Width = 34;
-            button.Height = 34;
+            button.Width = 32;
+            button.Height = 32;
             button.Padding = new Thickness(5);
             button.Margin = new Thickness(0, 0, 10, 0);
 
-            var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2) };
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 3, 0, 3) };
             row.Children.Add(button);
             row.Children.Add(new TextBlock
             {
@@ -155,7 +160,7 @@ public partial class CaptionResizePillWindow
         {
             PlacementTarget = _moreButton,
             Placement = PlacementMode.Bottom,
-            VerticalOffset = 9,
+            VerticalOffset = 10,
             AllowsTransparency = true,
             // Do not capture or discard clicks intended for the underlying application.
             StaysOpen = true,
@@ -165,7 +170,7 @@ public partial class CaptionResizePillWindow
                 BorderBrush = new SolidColorBrush(Color.FromRgb(62, 62, 68)),
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(15),
-                Padding = new Thickness(10),
+                Padding = new Thickness(12),
                 Effect = new DropShadowEffect
                 {
                     BlurRadius = 18,
@@ -210,12 +215,16 @@ public partial class CaptionResizePillWindow
             return;
         }
 
-        var desired = CalculateCollapsedWidth() + (_utilityClusterWidth - LegacyUtilityWidth);
-        var fixedFunctionalWidth = 16 + 58 + 6 + 58 + 6 + 6 + _utilityClusterWidth;
-        var available = double.IsFinite(_availableWidthDip)
-            ? Math.Max(_availableWidthDip, fixedFunctionalWidth)
-            : desired;
-        var constrained = Math.Max(MinimumPillWidth, Math.Min(desired, available));
+        // The old calculation used a smaller historical utility footprint
+        // and then subtracted it from the base width. The result was narrower
+        // than the actual fixed columns, so WPF clipped/squashed the More menu.
+        // Reserve the real column width first and let favorites take leftover
+        // space. Never exceed the screen width when there is room for all
+        // essential controls.
+        var fixedFunctionalWidth = CollapsedFixedWidth + _utilityClusterWidth;
+        var desired = Math.Max(fixedFunctionalWidth, CalculateCollapsedWidth() + (_utilityClusterWidth - 78));
+        var available = double.IsFinite(_availableWidthDip) ? _availableWidthDip : desired;
+        var constrained = Math.Max(fixedFunctionalWidth, Math.Min(desired, available));
         if (Math.Abs(Width - constrained) < 0.5)
         {
             return;

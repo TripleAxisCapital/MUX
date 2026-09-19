@@ -76,6 +76,7 @@ public sealed class MagneticSnapService : IDisposable
     private NativeRect _startRawRect;
     private bool _resizeDetected;
     private int _locationUpdateQueued;
+    private DateTime _lastPreviewUpdateUtc = DateTime.MinValue;
     private SnapAnchor? _horizontalAnchor;
     private SnapAnchor? _verticalAnchor;
     private NativeRect? _lastAppliedRawRect;
@@ -159,9 +160,15 @@ public sealed class MagneticSnapService : IDisposable
                 return;
             }
 
-            _dispatcher.BeginInvoke(DispatcherPriority.Render, new Action(() =>
+            _dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
             {
                 Interlocked.Exchange(ref _locationUpdateQueued, 0);
+                var now = DateTime.UtcNow;
+                if (now - _lastPreviewUpdateUtc < TimeSpan.FromMilliseconds(24))
+                {
+                    return;
+                }
+                _lastPreviewUpdateUtc = now;
                 HandleEvent(eventType, hwnd);
             }));
             return;
@@ -230,6 +237,7 @@ public sealed class MagneticSnapService : IDisposable
         _startRawRect = raw;
         _resizeDetected = false;
         _lastAppliedRawRect = null;
+        _lastPreviewUpdateUtc = DateTime.MinValue;
 
         var dpi = EffectiveDpi(hwnd);
         _snapThresholdPx = ScaleForDpi(14, dpi);
@@ -733,6 +741,7 @@ public sealed class MagneticSnapService : IDisposable
         _horizontalAnchor = null;
         _verticalAnchor = null;
         _lastAppliedRawRect = null;
+        _lastPreviewUpdateUtc = DateTime.MinValue;
         _candidates.Clear();
     }
 

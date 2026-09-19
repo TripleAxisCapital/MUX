@@ -59,10 +59,40 @@ jobs:
       - name: Package
         shell: pwsh
         run: Compress-Archive -Path artifacts/MUX/* -DestinationPath artifacts/MUX-win-x64.zip -CompressionLevel Optimal
+
+      - name: Install Inno Setup compiler
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+
+      - name: Build Standard installer
+        shell: pwsh
+        run: ./scripts/build-installer.ps1 -Edition Standard -SourceDir artifacts/MUX -OutputDir artifacts/installers
+
+      - name: Validate Standard installer registration
+        shell: pwsh
+        run: |
+          $setup = Join-Path $PWD "artifacts/installers/MUX-Standard-Setup-x64.exe"
+          $installDir = Join-Path $env:RUNNER_TEMP "MUX-Standard-Install-Test"
+          $installed = Start-Process -FilePath $setup -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=`"$installDir`"" -Wait -PassThru
+          if ($installed.ExitCode -ne 0) { throw "Standard installer exited with $($installed.ExitCode)." }
+          if (-not (Test-Path (Join-Path $installDir "MUX.exe"))) { throw "Installed MUX.exe was not found." }
+
+          $entry = Get-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*" -ErrorAction SilentlyContinue |
+            Where-Object { $_.DisplayName -eq "MUX" } |
+            Select-Object -First 1
+          if (-not $entry -or -not $entry.UninstallString) { throw "MUX is not correctly registered in Windows Installed Apps." }
+
+          $uninstaller = Join-Path $installDir "unins000.exe"
+          if (-not (Test-Path $uninstaller)) { throw "Standard uninstaller is missing." }
+          $removed = Start-Process -FilePath $uninstaller -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART" -Wait -PassThru
+          if ($removed.ExitCode -ne 0) { throw "Standard uninstaller exited with $($removed.ExitCode)." }
+
       - uses: actions/upload-artifact@v4
         with:
           name: MUX-win-x64
-          path: artifacts/MUX-win-x64.zip
+          path: |
+            artifacts/MUX-win-x64.zip
+            artifacts/installers/MUX-Standard-Setup-x64.exe
           if-no-files-found: error
 
   virtual-windows-build:
@@ -267,10 +297,39 @@ jobs:
 
           Write-Host "MUX Virtual package contains the controller, native Software Device bridge, complete driver package, public test certificate, and setup documentation."
 
+      - name: Install Inno Setup compiler
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+
+      - name: Build Virtual Displays installer
+        shell: pwsh
+        run: ./scripts/build-installer.ps1 -Edition Virtual -SourceDir artifacts/MUX.Virtual -OutputDir artifacts/installers
+
+      - name: Validate Virtual installer registration
+        shell: pwsh
+        run: |
+          $setup = Join-Path $PWD "artifacts/installers/MUX-Virtual-Setup-x64.exe"
+          $installDir = Join-Path $env:RUNNER_TEMP "MUX-Virtual-Install-Test"
+          $installed = Start-Process -FilePath $setup -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=`"$installDir`"" -Wait -PassThru
+          if ($installed.ExitCode -ne 0) { throw "Virtual installer exited with $($installed.ExitCode)." }
+          if (-not (Test-Path (Join-Path $installDir "MUX.Virtual.exe"))) { throw "Installed MUX.Virtual.exe was not found." }
+
+          $entry = Get-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*" -ErrorAction SilentlyContinue |
+            Where-Object { $_.DisplayName -eq "MUX Virtual Displays" } |
+            Select-Object -First 1
+          if (-not $entry -or -not $entry.UninstallString) { throw "MUX Virtual Displays is not correctly registered in Windows Installed Apps." }
+
+          $uninstaller = Join-Path $installDir "unins000.exe"
+          if (-not (Test-Path $uninstaller)) { throw "Virtual uninstaller is missing." }
+          $removed = Start-Process -FilePath $uninstaller -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART" -Wait -PassThru
+          if ($removed.ExitCode -ne 0) { throw "Virtual uninstaller exited with $($removed.ExitCode)." }
+
       - uses: actions/upload-artifact@v4
         with:
           name: MUX-Virtual-win-x64
-          path: artifacts/MUX-Virtual-win-x64.zip
+          path: |
+            artifacts/MUX-Virtual-win-x64.zip
+            artifacts/installers/MUX-Virtual-Setup-x64.exe
           if-no-files-found: error
 
   publish-rolling-windows-downloads:
@@ -305,7 +364,9 @@ jobs:
           if gh release view latest-build --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload latest-build \
               release-assets/MUX-win-x64.zip \
+              release-assets/MUX-Standard-Setup-x64.exe \
               release-assets/MUX-Virtual-win-x64.zip \
+              release-assets/MUX-Virtual-Setup-x64.exe \
               --repo "$GITHUB_REPOSITORY" \
               --clobber
 
@@ -316,7 +377,9 @@ jobs:
           else
             gh release create latest-build \
               release-assets/MUX-win-x64.zip \
+              release-assets/MUX-Standard-Setup-x64.exe \
               release-assets/MUX-Virtual-win-x64.zip \
+              release-assets/MUX-Virtual-Setup-x64.exe \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --title "MUX Latest Windows Builds" \

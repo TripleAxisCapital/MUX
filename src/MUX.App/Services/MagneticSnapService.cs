@@ -79,6 +79,7 @@ public sealed class MagneticSnapService : IDisposable
     private SnapAnchor? _horizontalAnchor;
     private SnapAnchor? _verticalAnchor;
     private NativeRect? _lastAppliedRawRect;
+    private SnapPreviewOverlay? _preview;
     private int _snapThresholdPx = 14;
     private int _releaseThresholdPx = 34;
     private bool _enabled = true;
@@ -145,10 +146,14 @@ public sealed class MagneticSnapService : IDisposable
             return;
         }
 
-        // Coalesce high-rate native move events; queued positions become stale when each
-        // SetWindowPos generates more location events of its own.
+        // Discard events for unrelated windows before coalescing. This prevents
+        // a busy desktop from starving the actively dragged window's preview.
         if (eventType == EventObjectLocationChange)
         {
+            if (hwnd != _movingHwnd)
+            {
+                return;
+            }
             if (Interlocked.Exchange(ref _locationUpdateQueued, 1) != 0)
             {
                 return;
@@ -228,7 +233,9 @@ public sealed class MagneticSnapService : IDisposable
 
         var dpi = EffectiveDpi(hwnd);
         _snapThresholdPx = ScaleForDpi(14, dpi);
-        _releaseThresholdPx = ScaleForDpi(34, dpi);
+        // Keep the anchor while within a small hysteresis band, without the
+        // old 34 px magnetic pull that made neighbouring windows jump.
+        _releaseThresholdPx = ScaleForDpi(19, dpi);
         CaptureCandidateWindows(hwnd);
     }
 
@@ -238,6 +245,7 @@ public sealed class MagneticSnapService : IDisposable
         {
             _horizontalAnchor = null;
             _verticalAnchor = null;
+            _preview?.Dismiss();
             return;
         }
 
@@ -252,6 +260,7 @@ public sealed class MagneticSnapService : IDisposable
             _resizeDetected = true;
             _horizontalAnchor = null;
             _verticalAnchor = null;
+            _preview?.Dismiss();
             return;
         }
 
@@ -272,6 +281,16 @@ public sealed class MagneticSnapService : IDisposable
 
         var deltaX = ResolveHorizontalDelta(visual, finalPass);
         var deltaY = ResolveVerticalDelta(visual, finalPass);
+
+        if (!finalPass)
+        {
+            // Never fight the OS mouse-move loop by repositioning the user's window.
+            // Show the eventual landing edges, then apply the correction once on mouse-up.
+            UpdatePreview(visual, deltaX, deltaY);
+            return;
+        }
+
+        _preview?.Dismiss();
         if (deltaX == 0 && deltaY == 0)
         {
             _lastAppliedRawRect = null;
@@ -279,11 +298,35 @@ public sealed class MagneticSnapService : IDisposable
         }
 
         ApplyTranslation(hwnd, raw, deltaX, deltaY);
-        // Verify pixel-perfect alignment only on release: corrective SetWindowPos calls
-        // during Windows' native drag loop compete with cursor tracking and cause jitter.
-        if (finalPass)
+        VerifyAndCorrectFlush(hwnd);
+    }
+
+    private void UpdatePreview(NativeRect visual, int deltaX, int deltaY)
+    {
+        if (_horizontalAnchor is null && _verticalAnchor is null)
         {
-            VerifyAndCorrectFlush(hwnd);
+            _preview?.Dismiss();
+            return;
+        }
+
+        try
+        {
+            _preview ??= new SnapPreviewOverlay();
+            _preview.Present(
+                visual.Left + deltaX,
+                visual.Top + deltaY,
+                visual.Width,
+                visual.Height,
+                _horizontalAnchor is not null,
+                _horizontalAnchor?.MovingEdge == MovingEdge.Far,
+                _verticalAnchor is not null,
+                _verticalAnchor?.MovingEdge == MovingEdge.Far,
+                EffectiveDpi(_movingHwnd));
+        }
+        catch
+        {
+            // A preview failure must never interfere with dragging or final snapping.
+            try { _preview?.Dismiss(); } catch { }
         }
     }
 
@@ -683,6 +726,7 @@ public sealed class MagneticSnapService : IDisposable
 
     private void ResetDrag()
     {
+        _preview?.Dismiss();
         _movingHwnd = IntPtr.Zero;
         _startRawRect = default;
         _resizeDetected = false;
@@ -701,6 +745,8 @@ public sealed class MagneticSnapService : IDisposable
 
         _disposed = true;
         ResetDrag();
+        _preview?.Dispose();
+        _preview = null;
 
         foreach (var hook in _hooks)
         {

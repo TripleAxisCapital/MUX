@@ -188,13 +188,13 @@ jobs:
           if gh release view latest-build --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload latest-build \
               release-assets/MUX-win-x64.zip \
-              release-assets/MUX-Standard-Setup-x64.exe \
+              release-assets/installers/MUX-Standard-Setup-x64.exe \
               --repo "$GITHUB_REPOSITORY" \
               --clobber
           else
             gh release create latest-build \
               release-assets/MUX-win-x64.zip \
-              release-assets/MUX-Standard-Setup-x64.exe \
+              release-assets/installers/MUX-Standard-Setup-x64.exe \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --title "MUX Latest Windows Builds" \

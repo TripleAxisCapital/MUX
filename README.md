@@ -14,14 +14,14 @@
       <td align="center">
         <strong>MUX Standard</strong><br/>
         <sub>Lightweight managed-monitor architecture</sub><br/><br/>
-        <a href="https://github.com/TripleAxisCapital/MUX/releases/download/latest-build/MUX-win-x64.zip">
+        <a href="https://github.com/TripleAxisCapital/MUX/releases/download/latest-build/MUX-Standard-Setup-x64.exe">
           <img src="docs/assets/download-windows.svg" width="300" alt="Download MUX Standard for Windows" />
         </a>
       </td>
       <td align="center">
         <strong>MUX Virtual Displays</strong><br/>
         <sub>True Windows virtual-monitor architecture</sub><br/><br/>
-        <a href="https://github.com/TripleAxisCapital/MUX/releases/download/latest-build/MUX-Virtual-win-x64.zip">
+        <a href="https://github.com/TripleAxisCapital/MUX/releases/download/latest-build/MUX-Virtual-Setup-x64.exe">
           <img src="docs/assets/download-virtual-windows.svg" width="340" alt="Download MUX Virtual Displays for Windows" />
         </a>
       </td>
@@ -175,19 +175,21 @@ See **[MUX Virtual Displays architecture and setup](docs/VIRTUAL-DISPLAYS.md)** 
 
 ### MUX Standard
 
-**[Download MUX Standard for Windows](https://github.com/TripleAxisCapital/MUX/releases/download/latest-build/MUX-win-x64.zip)**
+**[Install MUX Standard for Windows](https://github.com/TripleAxisCapital/MUX/releases/download/latest-build/MUX-Standard-Setup-x64.exe)**
 
-Use this if you want the existing lightweight MUX architecture with no display driver.
+The installer registers MUX in **Windows Settings → Apps → Installed apps**, installs the MUX icon and Start menu shortcut, and provides a normal Windows uninstaller. Existing layouts and personal MUX settings remain in `%LOCALAPPDATA%\MUX` across normal upgrades or app removal.
+
+[Portable ZIP](https://github.com/TripleAxisCapital/MUX/releases/download/latest-build/MUX-win-x64.zip) is still available if you specifically do not want an installed application.
 
 ### MUX Virtual Displays
 
-**[Download MUX Virtual Displays for Windows](https://github.com/TripleAxisCapital/MUX/releases/download/latest-build/MUX-Virtual-win-x64.zip)**
+**[Install MUX Virtual Displays for Windows](https://github.com/TripleAxisCapital/MUX/releases/download/latest-build/MUX-Virtual-Setup-x64.exe)**
 
-Use this if you specifically need true Windows monitor semantics.
+MUX Virtual Displays is installed and uninstalled as its own Windows application, independently from MUX Standard. Its current development/test-signed display driver is bundled but is **not silently trusted, staged, or used to change Windows boot security by the installer**. Driver activation remains an explicit in-app action until the driver has production signing.
 
-The Virtual ZIP contains the controller and its IddCx driver package. The driver build pipeline is in the repository, but a frictionless public retail installation requires the completed driver package to receive the appropriate Microsoft production signature.
+[Portable ZIP](https://github.com/TripleAxisCapital/MUX/releases/download/latest-build/MUX-Virtual-win-x64.zip) remains available for development and portable use.
 
-GitHub Actions refreshes both rolling downloads only after their respective Windows builds succeed.
+GitHub Actions builds and smoke-tests the installers, including Windows Installed Apps registration and uninstallation, before publishing them.
 
 ---
 

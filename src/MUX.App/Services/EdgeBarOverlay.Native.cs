@@ -7,7 +7,7 @@ namespace MUX.App.Services;
 
 internal sealed partial class EdgeBarOverlay
 {
-    private void MouseDown(object sender, MouseButtonEventArgs e)
+    private void HandleMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         if (_disposed || e.ChangedButton != MouseButton.Left || !TryGetCursor(out _dragStart) || !IsInteractivePoint(_dragStart))
         {
@@ -34,7 +34,7 @@ internal sealed partial class EdgeBarOverlay
         e.Handled = true;
     }
 
-    private void MouseUp(object sender, MouseButtonEventArgs e)
+    private void HandleMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
         if (!_dragging || e.ChangedButton != MouseButton.Left)
         {
@@ -159,7 +159,7 @@ internal sealed partial class EdgeBarOverlay
         return dpi == 0 ? 96u : Math.Max(96u, dpi);
     }
 
-    internal static uint ScaleDpiForRect(PixelRect rect)
+    internal static uint ScaleDpiForRect(EdgeBarPixelRect rect)
     {
         try
         {
@@ -183,25 +183,25 @@ internal sealed partial class EdgeBarOverlay
     internal static int ScaleForDpi(int value, uint dpi)
         => Math.Max(1, (int)Math.Round(value * Math.Max(96u, dpi) / 96.0));
 
-    private static PixelRect CalculateOverlayRect(PixelRect frame, int thickness, int proximity, EdgeBarSide side)
+    private static EdgeBarPixelRect CalculateOverlayRect(EdgeBarPixelRect frame, int thickness, int proximity, EdgeBarSide side)
         => side switch
         {
-            EdgeBarSide.Top => new PixelRect(
+            EdgeBarSide.Top => new EdgeBarPixelRect(
                 frame.Left,
                 frame.Top - proximity,
                 frame.Right,
                 Math.Min(frame.Bottom + proximity, frame.Top + thickness + proximity)),
-            EdgeBarSide.Bottom => new PixelRect(
+            EdgeBarSide.Bottom => new EdgeBarPixelRect(
                 frame.Left,
                 Math.Max(frame.Top - proximity, frame.Bottom - thickness - proximity),
                 frame.Right,
                 frame.Bottom + proximity),
-            EdgeBarSide.Left => new PixelRect(
+            EdgeBarSide.Left => new EdgeBarPixelRect(
                 frame.Left - proximity,
                 frame.Top,
                 Math.Min(frame.Right + proximity, frame.Left + thickness + proximity),
                 frame.Bottom),
-            EdgeBarSide.Right => new PixelRect(
+            EdgeBarSide.Right => new EdgeBarPixelRect(
                 Math.Max(frame.Left - proximity, frame.Right - thickness - proximity),
                 frame.Top,
                 frame.Right + proximity,

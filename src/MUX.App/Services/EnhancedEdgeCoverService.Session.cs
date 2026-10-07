@@ -12,7 +12,7 @@ public sealed partial class EnhancedEdgeCoverService
         private readonly EdgeBarOverlay _bottom;
         private readonly EdgeBarOverlay _left;
 
-        private PixelRect _targetRect;
+        private EdgeBarPixelRect _targetRect;
         private int _minimumThickness;
         private int _topThickness;
         private int _rightThickness;
@@ -181,11 +181,12 @@ public sealed partial class EnhancedEdgeCoverService
         }
     }
 
-    private static bool TryGetTargetRect(IntPtr hwnd, out PixelRect rect)
+    private static bool TryGetTargetRect(IntPtr hwnd, out EdgeBarPixelRect rect)
     {
-        if (DwmGetWindowAttribute(hwnd, DwmwaExtendedFrameBounds, out var native, Marshal.SizeOf<NativeRect>()) == 0)
+        NativeRect native;
+        if (DwmGetWindowAttribute(hwnd, DwmwaExtendedFrameBounds, out native, Marshal.SizeOf<NativeRect>()) == 0)
         {
-            rect = new PixelRect(native.Left, native.Top, native.Right, native.Bottom);
+            rect = new EdgeBarPixelRect(native.Left, native.Top, native.Right, native.Bottom);
             if (rect.Width > 0 && rect.Height > 0)
             {
                 return true;
@@ -194,7 +195,7 @@ public sealed partial class EnhancedEdgeCoverService
 
         if (GetWindowRect(hwnd, out native))
         {
-            rect = new PixelRect(native.Left, native.Top, native.Right, native.Bottom);
+            rect = new EdgeBarPixelRect(native.Left, native.Top, native.Right, native.Bottom);
             return rect.Width > 0 && rect.Height > 0;
         }
 

@@ -13,7 +13,7 @@ public sealed partial class ScreenEdgeBarService
         private readonly EdgeBarOverlay _bottom;
         private readonly EdgeBarOverlay _left;
         private DisplayProfile _display;
-        private PixelRect _frame;
+        private EdgeBarPixelRect _frame;
         private uint _dpi = 96;
         private int _minimumThickness = 4;
         private int _topThickness;
@@ -81,7 +81,7 @@ public sealed partial class ScreenEdgeBarService
 
         private void UpdateGeometryFromDisplay()
         {
-            _frame = new PixelRect(
+            _frame = new EdgeBarPixelRect(
                 _display.LeftPx,
                 _display.TopPx,
                 _display.LeftPx + Math.Max(1, _display.WidthPx),

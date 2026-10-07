@@ -19,7 +19,7 @@ internal enum EdgeBarSide
 
 internal readonly record struct PixelPoint(int X, int Y);
 
-internal readonly record struct PixelRect(int Left, int Top, int Right, int Bottom)
+internal readonly record struct EdgeBarPixelRect(int Left, int Top, int Right, int Bottom)
 {
     public int Width => Right - Left;
     public int Height => Bottom - Top;
@@ -59,9 +59,9 @@ internal sealed partial class EdgeBarOverlay : Window, IDisposable
     private readonly ScaleTransform _handleScale;
 
     private HwndSource? _source;
-    private PixelRect _frame;
-    private PixelRect _overlayRect;
-    private PixelRect _lastPositioned;
+    private EdgeBarPixelRect _frame;
+    private EdgeBarPixelRect _overlayRect;
+    private EdgeBarPixelRect _lastPositioned;
     private int _thickness;
     private int _grabRadius;
     private int _hoverRadius;
@@ -109,9 +109,9 @@ internal sealed partial class EdgeBarOverlay : Window, IDisposable
         _canvas.Children.Add(_handle);
         Content = _canvas;
 
-        MouseLeftButtonDown += MouseDown;
+        MouseLeftButtonDown += HandleMouseLeftButtonDown;
         MouseMove += MouseMoveHandler;
-        MouseLeftButtonUp += MouseUp;
+        MouseLeftButtonUp += HandleMouseLeftButtonUp;
         LostMouseCapture += LostCapture;
     }
 
@@ -209,7 +209,7 @@ internal sealed partial class EdgeBarOverlay : Window, IDisposable
         return IntPtr.Zero;
     }
 
-    public void Update(PixelRect frame, int thickness, uint dpi, PixelPoint? cursor, bool visible)
+    public void Update(EdgeBarPixelRect frame, int thickness, uint dpi, PixelPoint? cursor, bool visible)
     {
         if (_disposed)
         {
@@ -276,5 +276,4 @@ internal sealed partial class EdgeBarOverlay : Window, IDisposable
         DrawHandle(cursor);
         SetInputTransparent(!_dragging && !IsInteractivePoint(cursor));
     }
-
 }

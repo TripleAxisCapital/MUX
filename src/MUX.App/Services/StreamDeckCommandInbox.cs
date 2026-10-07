@@ -6,14 +6,13 @@ namespace MUX.App.Services;
 /// <summary>
 /// Reliable, same-user Stream Deck command transport. Dedicated launcher executables write tiny
 /// command files into LocalAppData. MUX claims them atomically on its UI dispatcher, performs the
-/// action, and writes an acknowledgement that the launcher waits for. This deliberately avoids
-/// global hotkeys, window-title discovery, SendMessage/UIPI, and whether the main window is hidden
-/// in the notification area.
+/// action, and writes an acknowledgement that the launcher waits for.
 /// </summary>
 public sealed class StreamDeckCommandInbox : IDisposable
 {
     public const string AutoArrangeCommand = "auto-arrange";
     public const string ToggleBlackBarsCommand = "toggle-black-bars";
+    public const string ToggleScreenBarsCommand = "toggle-screen-bars";
 
     private readonly DispatcherTimer _timer;
     private readonly Action _autoArrange;
@@ -123,7 +122,6 @@ public sealed class StreamDeckCommandInbox : IDisposable
         var claimedPath = path + $".processing-{Environment.ProcessId}";
         try
         {
-            // Atomic claim: if two MUX processes briefly overlap, only one can execute the command.
             File.Move(path, claimedPath);
         }
         catch
@@ -142,8 +140,6 @@ public sealed class StreamDeckCommandInbox : IDisposable
                     var result = ExecuteAutoArrangeNow();
                     if (result is null)
                     {
-                        // During startup the main window can exist before its state/display discovery
-                        // has completed. Put the command back and let the next 75 ms tick retry it.
                         keepClaimedFile = TryReturnToInbox(claimedPath, path);
                         return;
                     }
@@ -158,7 +154,13 @@ public sealed class StreamDeckCommandInbox : IDisposable
 
                 case ToggleBlackBarsCommand:
                     _toggleBlackBars();
-                    WriteAcknowledgement(id, "OK|Black bars toggled.");
+                    WriteAcknowledgement(id, "OK|Window black bars toggled.");
+                    AppendLog($"executed {id} {command} => OK");
+                    break;
+
+                case ToggleScreenBarsCommand:
+                    ScreenEdgeBarService.Shared.ToggleAllVisibility();
+                    WriteAcknowledgement(id, "OK|Screen edge bars toggled.");
                     AppendLog($"executed {id} {command} => OK");
                     break;
 
@@ -182,20 +184,11 @@ public sealed class StreamDeckCommandInbox : IDisposable
         }
     }
 
-    /// <summary>
-    /// Stream Deck must receive the result of the actual arrange operation, not merely an ACK that
-    /// the operation was queued. The Action supplied by App is the MainWindow method group, so its
-    /// Target is the resident MainWindow. Calling AutoArrangeCursorDisplay here executes on the UI
-    /// dispatcher and returns the real success/failure result synchronously.
-    /// </summary>
     private AutoArrangeResult? ExecuteAutoArrangeNow()
     {
         if (_autoArrange.Target is global::MUX.App.MainWindow mainWindow)
         {
             var result = mainWindow.AutoArrangeCursorDisplay(showFeedback: false);
-
-            // This specific failure is transient while the app is loading its saved state and
-            // discovering displays. Defer rather than incorrectly telling Stream Deck it failed.
             if (!result.Success &&
                 result.Message.Contains("has not detected a physical display yet", StringComparison.OrdinalIgnoreCase))
             {
@@ -205,7 +198,6 @@ public sealed class StreamDeckCommandInbox : IDisposable
             return result;
         }
 
-        // Defensive compatibility fallback. Current MUX always supplies MainWindow.QueueAutoArrangeCommand.
         _autoArrange();
         return AutoArrangeResult.Ok(0, string.Empty, 0, "Auto Arrange command was queued.");
     }

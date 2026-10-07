@@ -10,6 +10,7 @@ internal static class Program
 {
     private const string AutoArrangeCommand = "auto-arrange";
     private const string ToggleBlackBarsCommand = "toggle-black-bars";
+    private const string ToggleScreenBarsCommand = "toggle-screen-bars";
     private const uint MbOk = 0x00000000;
     private const uint MbIconInformation = 0x00000040;
 
@@ -17,7 +18,8 @@ internal static class Program
     {
         None,
         AutoArrange,
-        ToggleBlackBars
+        ToggleBlackBars,
+        ToggleScreenBars
     }
 
     private readonly record struct Acknowledgement(bool Received, bool Success, string Message);
@@ -33,10 +35,7 @@ internal static class Program
                 return 2;
             }
 
-            var commandText = command == Command.AutoArrange
-                ? AutoArrangeCommand
-                : ToggleBlackBarsCommand;
-
+            var commandText = CommandText(command);
             var root = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "MUX",
@@ -51,8 +50,6 @@ internal static class Program
             File.WriteAllText(tempPath, commandText);
             File.Move(tempPath, commandPath);
 
-            // A running current MUX normally acknowledges in under 100 ms. The acknowledgement now
-            // represents the result of the real operation, not merely that Auto Arrange was queued.
             var acknowledgement = WaitForAcknowledgement(acknowledgementPath, 3000);
             if (acknowledgement.Received)
             {
@@ -68,8 +65,6 @@ internal static class Program
                 return 3;
             }
 
-            // If no compatible resident MUX consumed the command, launch Standard from the same
-            // package. Its command inbox will pick up the already-written request after startup.
             Process.Start(new ProcessStartInfo
             {
                 FileName = muxPath,
@@ -97,6 +92,15 @@ internal static class Program
         }
     }
 
+    private static string CommandText(Command command)
+        => command switch
+        {
+            Command.AutoArrange => AutoArrangeCommand,
+            Command.ToggleBlackBars => ToggleBlackBarsCommand,
+            Command.ToggleScreenBars => ToggleScreenBarsCommand,
+            _ => string.Empty
+        };
+
     private static int Complete(Command command, Acknowledgement acknowledgement)
     {
         if (acknowledgement.Success)
@@ -104,8 +108,7 @@ internal static class Program
             return 0;
         }
 
-        var commandText = command == Command.AutoArrange ? AutoArrangeCommand : ToggleBlackBarsCommand;
-        WriteFailureLog(commandText, acknowledgement.Message);
+        WriteFailureLog(CommandText(command), acknowledgement.Message);
         ShowFailure(command, acknowledgement.Message);
         return 6;
     }
@@ -124,9 +127,20 @@ internal static class Program
             {
                 return Command.ToggleBlackBars;
             }
+
+            if (arg.Equals("--toggle-screen-bars", StringComparison.OrdinalIgnoreCase) ||
+                arg.Equals("--screen-bars", StringComparison.OrdinalIgnoreCase))
+            {
+                return Command.ToggleScreenBars;
+            }
         }
 
         var fileName = Path.GetFileName(Environment.ProcessPath ?? string.Empty);
+        if (fileName.Contains("ScreenBars", StringComparison.OrdinalIgnoreCase))
+        {
+            return Command.ToggleScreenBars;
+        }
+
         if (fileName.Contains("BlackBars", StringComparison.OrdinalIgnoreCase))
         {
             return Command.ToggleBlackBars;
@@ -160,7 +174,6 @@ internal static class Program
                         return new Acknowledgement(true, false, ExtractMessage(value, "ERROR"));
                     }
 
-                    // Backward compatibility with the first inbox build, which wrote plain "OK".
                     if (value.Equals("OK", StringComparison.OrdinalIgnoreCase))
                     {
                         return new Acknowledgement(true, true, string.Empty);
@@ -196,18 +209,18 @@ internal static class Program
     {
         try
         {
-            // GitHub Actions has no person to dismiss a dialog. On a real desktop this makes a
-            // failed Stream Deck press self-explanatory instead of appearing to do nothing.
             if (string.Equals(Environment.GetEnvironmentVariable("CI"), "true", StringComparison.OrdinalIgnoreCase))
             {
                 return;
             }
 
-            var title = command == Command.AutoArrange
-                ? "MUX Auto Arrange"
-                : command == Command.ToggleBlackBars
-                    ? "MUX Black Bars"
-                    : "MUX Stream Deck";
+            var title = command switch
+            {
+                Command.AutoArrange => "MUX Auto Arrange",
+                Command.ToggleBlackBars => "MUX Window Black Bars",
+                Command.ToggleScreenBars => "MUX Screen Bars",
+                _ => "MUX Stream Deck"
+            };
             _ = MessageBox(IntPtr.Zero, message, title, MbOk | MbIconInformation);
         }
         catch

@@ -23,7 +23,7 @@
     <ProjectReference Include="..\MUX.Core\MUX.Core.csproj" />
   </ItemGroup>
 
-  <!-- Every published Standard package gets two genuine NativeAOT Stream Deck helpers. -->
+  <!-- Every published Standard package gets genuine NativeAOT Stream Deck helpers. -->
   <Target Name="PublishStreamDeckLaunchers" AfterTargets="Publish" Condition="'$(RuntimeIdentifier)' == 'win-x64'">
     <PropertyGroup>
       <_StreamDeckProject>$(MSBuildProjectDirectory)\..\MUX.StreamDeckLauncher\MUX.StreamDeckLauncher.csproj</_StreamDeckProject>
@@ -36,6 +36,8 @@
           DestinationFiles="$(PublishDir)MUX-AutoArrange.exe" />
     <Copy SourceFiles="$(_StreamDeckPublishDir)MUX-StreamDeckLauncher.exe"
           DestinationFiles="$(PublishDir)MUX-BlackBars.exe" />
+    <Copy SourceFiles="$(_StreamDeckPublishDir)MUX-StreamDeckLauncher.exe"
+          DestinationFiles="$(PublishDir)MUX-ScreenBars.exe" />
     <RemoveDir Directories="$(_StreamDeckPublishDir)" />
   </Target>
 </Project>

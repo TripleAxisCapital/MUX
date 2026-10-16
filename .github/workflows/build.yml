@@ -346,11 +346,10 @@ jobs:
             artifacts/installers/MUX-Virtual-Setup-x64.exe
           if-no-files-found: error
 
-  publish-rolling-windows-downloads:
-    name: Publish rolling Windows downloads
+  publish-rolling-virtual-downloads:
+    name: Publish rolling Virtual Displays downloads
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs:
-      - windows-build
       - virtual-windows-build
     runs-on: ubuntu-latest
     permissions:
@@ -360,15 +359,10 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: MUX-win-x64
-          path: release-assets
-
-      - uses: actions/download-artifact@v4
-        with:
           name: MUX-Virtual-win-x64
           path: release-assets
 
-      - name: Publish rolling release
+      - name: Publish rolling Virtual release assets
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -377,8 +371,6 @@ jobs:
 
           if gh release view latest-build --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload latest-build \
-              release-assets/MUX-win-x64.zip \
-              release-assets/installers/MUX-Standard-Setup-x64.exe \
               release-assets/MUX-Virtual-win-x64.zip \
               release-assets/installers/MUX-Virtual-Setup-x64.exe \
               --repo "$GITHUB_REPOSITORY" \
@@ -387,16 +379,14 @@ jobs:
             gh release edit latest-build \
               --repo "$GITHUB_REPOSITORY" \
               --title "MUX Latest Windows Builds" \
-              --notes "Two independent Windows downloads from main: MUX Standard (managed monitor regions) and MUX Virtual Displays (IddCx true virtual-monitor architecture). The rolling Virtual build is test-signed for development, includes the native Software Device bridge, and includes only the public test certificate needed for explicit local trust. Retail distribution still requires Microsoft production driver signing."
+              --notes "MUX Standard uses the managed self-updating release channel. MUX Virtual Displays remains on its driver-specific installer pipeline. The rolling Virtual build is test-signed for development, includes the native Software Device bridge, and includes only the public test certificate needed for explicit local trust. Retail distribution still requires Microsoft production driver signing."
           else
             gh release create latest-build \
-              release-assets/MUX-win-x64.zip \
-              release-assets/installers/MUX-Standard-Setup-x64.exe \
               release-assets/MUX-Virtual-win-x64.zip \
               release-assets/installers/MUX-Virtual-Setup-x64.exe \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --title "MUX Latest Windows Builds" \
-              --notes "Two independent Windows downloads from main: MUX Standard (managed monitor regions) and MUX Virtual Displays (IddCx true virtual-monitor architecture). The rolling Virtual build is test-signed for development, includes the native Software Device bridge, and includes only the public test certificate needed for explicit local trust. Retail distribution still requires Microsoft production driver signing." \
+              --notes "MUX Standard uses the managed self-updating release channel. MUX Virtual Displays remains on its driver-specific installer pipeline. The rolling Virtual build is test-signed for development, includes the native Software Device bridge, and includes only the public test certificate needed for explicit local trust. Retail distribution still requires Microsoft production driver signing." \
               --prerelease
           fi

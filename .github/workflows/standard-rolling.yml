@@ -1,4 +1,4 @@
-name: Publish MUX Standard rolling download
+name: Publish MUX Standard managed release
 
 on:
   push:
@@ -9,30 +9,50 @@ permissions:
   contents: write
 
 concurrency:
-  group: mux-standard-rolling
+  group: mux-standard-managed-release
   cancel-in-progress: true
 
 jobs:
   build-standard:
-    name: Build MUX Standard immediately
+    name: Build, test and publish MUX Standard
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
 
+      - name: Set managed release version
+        shell: pwsh
+        run: |
+          $version = "2.0.$env:GITHUB_RUN_NUMBER"
+          "MUX_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "MUX managed release: $version"
+
       - name: Restore
         run: dotnet restore MUX.sln
 
+      - name: Run deterministic core validation
+        run: dotnet run --project tests/MUX.Core.Tests/MUX.Core.Tests.csproj -c Release --no-restore
+
       - name: Publish MUX Standard
-        run: dotnet publish src/MUX.App/MUX.App.csproj -c Release -r win-x64 --self-contained true -o artifacts/MUX
+        shell: pwsh
+        run: |
+          dotnet publish src/MUX.App/MUX.App.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -p:Version=$env:MUX_VERSION `
+            -p:ContinuousIntegrationBuild=true `
+            -o artifacts/MUX
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Publish dedicated Stream Deck launchers
         shell: pwsh
         run: |
           dotnet publish src/MUX.StreamDeckLauncher/MUX.StreamDeckLauncher.csproj `
-            -c Release -r win-x64 --self-contained true -o artifacts/StreamDeck
+            -c Release -r win-x64 --self-contained true -p:PublishAot=true -o artifacts/StreamDeck
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
           $source = Join-Path $PWD "artifacts/StreamDeck/MUX-StreamDeckLauncher.exe"
@@ -42,6 +62,7 @@ jobs:
 
           Copy-Item $source (Join-Path $PWD "artifacts/MUX/MUX-AutoArrange.exe") -Force
           Copy-Item $source (Join-Path $PWD "artifacts/MUX/MUX-BlackBars.exe") -Force
+          Copy-Item $source (Join-Path $PWD "artifacts/MUX/MUX-ScreenBars.exe") -Force
 
       - name: Launch and Stream Deck command smoke test
         shell: pwsh
@@ -49,8 +70,9 @@ jobs:
           $exe = Join-Path $PWD "artifacts/MUX/MUX.exe"
           $autoLauncher = Join-Path $PWD "artifacts/MUX/MUX-AutoArrange.exe"
           $barsLauncher = Join-Path $PWD "artifacts/MUX/MUX-BlackBars.exe"
+          $screenBarsLauncher = Join-Path $PWD "artifacts/MUX/MUX-ScreenBars.exe"
 
-          foreach ($required in @($exe, $autoLauncher, $barsLauncher)) {
+          foreach ($required in @($exe, $autoLauncher, $barsLauncher, $screenBarsLauncher)) {
             if (-not (Test-Path $required)) {
               throw "Required Standard executable is missing: $required"
             }
@@ -82,18 +104,18 @@ jobs:
             Write-Host "$name returned expected code $($child.ExitCode)."
           }
 
-          # On a headless CI desktop there may be no eligible normal window to arrange. Exit code 6
-          # is therefore valid here: it proves the launcher received the real Auto Arrange result
-          # instead of incorrectly ACKing a queued command. On a user's desktop, that same result is
-          # shown as an explanatory MUX Auto Arrange dialog.
+          # A headless CI desktop may have no eligible normal window. Exit code 6 proves
+          # Auto Arrange returned a real execution result rather than only acknowledging a queue.
           Test-Launcher $autoLauncher "MUX-AutoArrange.exe" @(0, 6)
           Test-Launcher $barsLauncher "MUX-BlackBars.exe" @(0)
           Test-Launcher $barsLauncher "MUX-BlackBars.exe second toggle" @(0)
+          Test-Launcher $screenBarsLauncher "MUX-ScreenBars.exe" @(0)
 
           $commandLog = Join-Path $env:LOCALAPPDATA "MUX/streamdeck-command.log"
           if (-not (Test-Path $commandLog)) {
             throw "MUX did not create the Stream Deck command execution log."
           }
+
           $commandLogText = Get-Content $commandLog -Raw
           if ($commandLogText -notmatch "auto-arrange => (OK|ERROR)") {
             throw "Auto Arrange did not record a real execution outcome."
@@ -119,66 +141,109 @@ jobs:
           }
 
           Stop-Process -Id $process.Id -Force
-          Write-Host "Dedicated Stream Deck launchers returned real command outcomes and the resident MUX process stayed alive."
+          Write-Host "MUX startup and dedicated Stream Deck command paths passed."
 
-      - name: Package Standard
+      - name: Package portable build
         shell: pwsh
         run: Compress-Archive -Path artifacts/MUX/* -DestinationPath artifacts/MUX-win-x64.zip -CompressionLevel Optimal
 
-      - name: Install Inno Setup compiler
-        shell: pwsh
-        run: choco install innosetup --yes --no-progress
-
-      - name: Build Windows installer
-        shell: pwsh
-        run: ./scripts/build-installer.ps1 -Edition Standard -SourceDir artifacts/MUX -OutputDir artifacts/installers
-
-      - name: Installer registration smoke test
+      - name: Install pinned Velopack CLI
         shell: pwsh
         run: |
-          $setup = Join-Path $PWD "artifacts/installers/MUX-Standard-Setup-x64.exe"
-          $installDir = Join-Path $env:RUNNER_TEMP "MUX-Installer-Smoke"
-          $process = Start-Process -FilePath $setup -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=`"$installDir`"" -Wait -PassThru
-          if ($process.ExitCode -ne 0) { throw "MUX installer exited with $($process.ExitCode)." }
-          if (-not (Test-Path (Join-Path $installDir "MUX.exe"))) { throw "Installed MUX.exe was not found." }
-
-          $uninstallRoots = @(
-            "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
-            "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
-            "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
-            "HKCU:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
-          )
-          $entries = foreach ($root in $uninstallRoots) {
-            Get-ItemProperty $root -ErrorAction SilentlyContinue
+          $existing = Get-Command vpk -ErrorAction SilentlyContinue
+          if ($existing) {
+            dotnet tool update -g vpk --version 1.2.161
+          } else {
+            dotnet tool install -g vpk --version 1.2.161
           }
-          $entry = $entries | Where-Object { $_.DisplayName -eq "MUX" } | Select-Object -First 1
-          if (-not $entry) { throw "MUX was not registered in Windows Installed Apps." }
-          if (-not $entry.UninstallString) { throw "MUX uninstall registration is missing its uninstaller." }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-          $uninstaller = Join-Path $installDir "unins000.exe"
-          if (-not (Test-Path $uninstaller)) { throw "MUX uninstaller was not installed." }
-          $uninstall = Start-Process -FilePath $uninstaller -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART" -Wait -PassThru
-          if ($uninstall.ExitCode -ne 0) { throw "MUX uninstaller exited with $($uninstall.ExitCode)." }
+          $toolPath = Join-Path $env:USERPROFILE ".dotnet\tools"
+          $toolPath | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Prepare previous managed release
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          New-Item -ItemType Directory -Path artifacts/Releases -Force | Out-Null
+
+          & vpk download github `
+            --repoUrl "https://github.com/TripleAxisCapital/MUX" `
+            --token $env:GITHUB_TOKEN `
+            --outputDir artifacts/Releases
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "No previous managed MUX release is available yet. Building a full first package."
+            $global:LASTEXITCODE = 0
+          }
+
+      - name: Build managed MUX installer
+        shell: pwsh
+        run: |
+          Get-ChildItem artifacts/Releases -Filter "*-Setup.exe" -File -ErrorAction SilentlyContinue |
+            Remove-Item -Force -ErrorAction SilentlyContinue
+
+          & vpk pack `
+            --packId TripleAxisCapital.MUX `
+            --packVersion $env:MUX_VERSION `
+            --packDir artifacts/MUX `
+            --mainExe MUX.exe `
+            --packTitle "MUX" `
+            --packAuthors "Triple Axis Capital" `
+            --icon src/MUX.App/Assets/mux-app.ico `
+            --releaseNotes RELEASE_NOTES.md `
+            --outputDir artifacts/Releases
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $setup = Get-ChildItem artifacts/Releases -Filter "*-Setup.exe" -File |
+            Sort-Object LastWriteTimeUtc -Descending |
+            Select-Object -First 1
+
+          if (-not $setup) {
+            throw "Velopack completed but did not produce Setup.exe."
+          }
+
+          New-Item -ItemType Directory -Path artifacts/installers -Force | Out-Null
+          Copy-Item $setup.FullName artifacts/installers/MUX-Standard-Setup-x64.exe -Force
+
+      - name: Publish versioned managed release
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          & vpk upload github `
+            --repoUrl "https://github.com/TripleAxisCapital/MUX" `
+            --token $env:GITHUB_TOKEN `
+            --outputDir artifacts/Releases `
+            --publish `
+            --releaseName "MUX $env:MUX_VERSION" `
+            --tag "v$env:MUX_VERSION" `
+            --targetCommitish $env:GITHUB_SHA `
+            --merge
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          Write-Host "Managed release v$env:MUX_VERSION is live. Installed MUX clients can discover it now."
 
       - uses: actions/upload-artifact@v4
         with:
-          name: MUX-Standard-rolling
+          name: MUX-Standard-managed
           path: |
             artifacts/MUX-win-x64.zip
             artifacts/installers/MUX-Standard-Setup-x64.exe
           if-no-files-found: error
 
   publish-standard:
-    name: Replace Standard download immediately
+    name: Refresh stable Standard download link
     needs: build-standard
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: MUX-Standard-rolling
+          name: MUX-Standard-managed
           path: release-assets
 
-      - name: Publish current Standard asset
+      - name: Publish current Standard assets
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -198,7 +263,7 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --title "MUX Latest Windows Builds" \
-              --notes "Rolling MUX Windows downloads. MUX Standard is published immediately after its Windows build succeeds; MUX Virtual Displays is published by the full driver pipeline." \
+              --notes "Rolling MUX Windows downloads. MUX Standard uses the managed Velopack installer; MUX Virtual Displays is published by the full driver pipeline." \
               --prerelease
           fi
 

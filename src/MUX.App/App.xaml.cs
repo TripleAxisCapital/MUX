@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Media.Imaging;
 using MUX.App.Services;
+using Velopack;
 using Forms = System.Windows.Forms;
 
 namespace MUX.App;
@@ -17,7 +18,20 @@ public partial class App : Application
     private MainWindow? _mainWindow;
     private Icon? _muxIcon;
     private StreamDeckCommandInbox? _streamDeckCommandInbox;
+    private MuxUpdateService? _updateService;
     private bool _isExiting;
+
+    [STAThread]
+    private static void Main(string[] args)
+    {
+        // Velopack must run before WPF initializes so install, update and restart hooks
+        // are handled before MUX creates windows, tray icons or global hooks.
+        VelopackApp.Build().Run();
+
+        var app = new App();
+        app.InitializeComponent();
+        app.Run();
+    }
 
     public App()
     {
@@ -40,6 +54,7 @@ public partial class App : Application
         _mainWindow = new MainWindow();
         ApplyWindowIconSafely(_mainWindow);
         MainWindow = _mainWindow;
+
         _mainWindow.InitializeFeatureControls();
         _mainWindow.InitializePhantomWindows();
         _mainWindow.InitializeFreeformControls();
@@ -49,6 +64,10 @@ public partial class App : Application
         // LocalAppData command inbox below and therefore does not depend on a visible HWND.
         _mainWindow.InitializeBlackBarsCommandBridge();
         _mainWindow.InitializeScreenEdgeBars();
+
+        _updateService = new MuxUpdateService();
+        _mainWindow.InitializeUpdates(_updateService);
+        _updateService.StartAutomaticChecks();
 
         _streamDeckCommandInbox = new StreamDeckCommandInbox(
             _mainWindow.Dispatcher,
@@ -88,6 +107,8 @@ public partial class App : Application
         _isExiting = true;
         _streamDeckCommandInbox?.Dispose();
         _streamDeckCommandInbox = null;
+        _updateService?.Dispose();
+        _updateService = null;
         DisposeBlackBarsTrayControls();
         _trayIcon?.Dispose();
         _trayIcon = null;
@@ -102,6 +123,8 @@ public partial class App : Application
     {
         _streamDeckCommandInbox?.Dispose();
         _streamDeckCommandInbox = null;
+        _updateService?.Dispose();
+        _updateService = null;
         DisposeBlackBarsTrayControls();
         try { ScreenEdgeBarService.Shared.Dispose(); } catch { }
         try { EnhancedEdgeCoverService.Shared.Dispose(); } catch { }
@@ -109,5 +132,4 @@ public partial class App : Application
         _muxIcon?.Dispose();
         base.OnExit(e);
     }
-
 }

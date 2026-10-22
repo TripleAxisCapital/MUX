@@ -88,13 +88,12 @@
                 <StackPanel>
                     <TextBlock Text="DISPLAY" Foreground="{StaticResource SubtleBrush}" FontSize="8" FontWeight="SemiBold"/><TextBlock Text="Physical source" Foreground="{StaticResource MutedBrush}" FontSize="9" Margin="0,3,0,9"/>
                     <ComboBox x:Name="DisplayCombo" Style="{StaticResource MuxComboBox}" SelectionChanged="DisplayCombo_SelectionChanged"/>
-                    <TextBlock Text="Physical diagonal" Foreground="{StaticResource MutedBrush}" FontSize="10" Margin="2,13,0,6"/>
+                    <TextBlock Text="Physical display diagonal (inches)" Foreground="{StaticResource MutedBrush}" FontSize="10" Margin="2,13,0,6"/>
                     <Grid><TextBox x:Name="DisplaySizeBox" Style="{StaticResource MuxTextBox}" Padding="11,8,38,8" LostFocus="DisplaySizeBox_LostFocus"/><TextBlock Text="in" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,12,0" FontSize="10"/></Grid>
                     <TextBlock x:Name="DisplayMetricsText" Foreground="#969696" FontSize="9" Margin="2,7,0,0" TextWrapping="Wrap" LineHeight="13"/>
-                    <Button Content="Calibrate physical scale" Style="{StaticResource MuxButton}" Margin="0,10,0,0" Padding="10,8" Click="Calibrate_Click"/>
                     <Border Height="1" Background="#272727" Margin="0,17,0,15"/>
                     <StackPanel x:Name="ZoneInspector" Visibility="Collapsed">
-                        <TextBlock Text="SELECTED MONITOR" Foreground="{StaticResource SubtleBrush}" FontSize="8" FontWeight="SemiBold" Margin="2,0,0,8"/>
+                        <TextBlock Text="SELECTED ZONE · DIAGONAL INCHES" Foreground="{StaticResource SubtleBrush}" FontSize="8" FontWeight="SemiBold" Margin="2,0,0,8"/>
                         <TextBox x:Name="ZoneNameBox" Style="{StaticResource MuxTextBox}"/>
                         <Grid Margin="0,8,0,0"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="7"/><ColumnDefinition Width="104"/></Grid.ColumnDefinitions><Grid><TextBox x:Name="ZoneSizeBox" Style="{StaticResource MuxTextBox}" Padding="11,8,38,8"/><TextBlock Text="in" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,12,0" FontSize="10"/></Grid><ComboBox x:Name="ZoneAspectBox" Grid.Column="2" Style="{StaticResource MuxComboBox}"><ComboBoxItem Content="16:9"/><ComboBoxItem Content="16:10"/><ComboBoxItem Content="21:9"/><ComboBoxItem Content="32:9"/><ComboBoxItem Content="4:3"/><ComboBoxItem Content="3:2"/></ComboBox></Grid>
                         <Grid Margin="0,8,0,0"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="6"/><ColumnDefinition/></Grid.ColumnDefinitions><Button Content="Update" Style="{StaticResource MuxButton}" Padding="8" Click="UpdateZone_Click"/><Button Grid.Column="2" Content="Remove" Style="{StaticResource MuxQuietButton}" Padding="8" Click="DeleteZone_Click"/></Grid>
@@ -112,6 +111,22 @@
                         <StackPanel x:Name="SettingsBehaviorStack">
                             <CheckBox x:Name="SnapCheck" Content="Snap windows to monitors" Style="{StaticResource MuxCheckBox}" Click="BehaviorChanged_Click"/>
                             <CheckBox x:Name="StartupCheck" Content="Launch at sign in" Style="{StaticResource MuxCheckBox}" Margin="0,11,0,0" Click="StartupChanged_Click"/>
+                            <Border Height="1" Background="#303030" Margin="0,18,0,16"/>
+                            <TextBlock Text="DRAG TARGETS" FontWeight="SemiBold" FontSize="10" Foreground="{StaticResource SubtleBrush}"/>
+                            <TextBlock Text="Zones appear only when dragging a window. The target under your pointer lights up before you release."
+                                       FontSize="11" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,6,0,12"/>
+                            <StackPanel Orientation="Horizontal">
+                                <Border x:Name="SnapColorPreview" Width="28" Height="28" CornerRadius="5" Background="#30D158"
+                                        BorderBrush="#9A9A9A" BorderThickness="1" Margin="0,0,10,0"/>
+                                <Button Content="Choose highlight color" x:Name="SnapColorButton" Style="{StaticResource MuxButton}"
+                                        Padding="12,8" Click="SnapColorButton_Click"/>
+                            </StackPanel>
+                            <Border Height="1" Background="#303030" Margin="0,18,0,16"/>
+                            <TextBlock Text="PHYSICAL ACCURACY" FontWeight="SemiBold" FontSize="10" Foreground="{StaticResource SubtleBrush}"/>
+                            <TextBlock Text="Calibrate the selected display with a ruler. Zone sizes describe the diagonal, not the width."
+                                       FontSize="11" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,6,0,10"/>
+                            <Button Content="Calibrate selected display" Style="{StaticResource MuxButton}"
+                                    Padding="12,9" Click="Calibrate_Click"/>
                             <Border Background="#0F0F0F" BorderBrush="#272727" BorderThickness="1" CornerRadius="11" Padding="11" Margin="0,16,0,0"><StackPanel><TextBlock Text="Keyboard" FontSize="10" FontWeight="SemiBold" Foreground="#B2B2B2"/><TextBlock Text="Ctrl + Alt + M   Maximize / restore" Foreground="#9A9A9A" FontSize="9" Margin="0,6,0,0"/><TextBlock Text="Ctrl + Alt + F   MUX Fullscreen" Foreground="#9A9A9A" FontSize="9" Margin="0,4,0,0"/><TextBlock Text="Ctrl + Alt + B   Black bars / Stream Deck" Foreground="#9A9A9A" FontSize="9" Margin="0,4,0,0"/><TextBlock Text="Ctrl + Alt + ←   Previous monitor" Foreground="#9A9A9A" FontSize="9" Margin="0,4,0,0"/><TextBlock Text="Ctrl + Alt + →   Next monitor" Foreground="#9A9A9A" FontSize="9" Margin="0,4,0,0"/><TextBlock Text="Ctrl + Alt + E   Edit layout" Foreground="#9A9A9A" FontSize="9" Margin="0,4,0,0"/><TextBlock Text="Ctrl + Alt + A   Auto Arrange" Foreground="#9A9A9A" FontSize="9" Margin="0,4,0,0"/></StackPanel></Border>
                         </StackPanel>
                     </ScrollViewer>

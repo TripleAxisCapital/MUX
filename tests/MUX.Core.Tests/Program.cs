@@ -114,6 +114,45 @@ Run("maximize selection prefers the title-bar zone", () =>
     }
 });
 
+Run("drag target is chosen only when the cursor is inside a zone", () =>
+{
+    var display = new DisplayProfile { LeftPx = -2560, TopPx = 100, WidthPx = 2560, HeightPx = 1440, DiagonalInches = 50 };
+    var layout = new LayoutProfile();
+    var first = new VirtualMonitorZone { DiagonalInches = 20, XInches = 0, YInches = 0 };
+    var second = new VirtualMonitorZone { DiagonalInches = 20, XInches = 22, YInches = 0 };
+    layout.Zones.Add(first);
+    layout.Zones.Add(second);
+    var rect = DisplayGeometry.ZoneToPixels(display, second);
+    if (DisplayGeometry.FindZoneAtPoint(display, layout, rect.CenterX, rect.CenterY)?.Id != second.Id)
+        throw new Exception("hover did not select second target on negative-origin display");
+    if (DisplayGeometry.FindZoneAtPoint(display, layout, display.LeftPx + 4, display.TopPx + display.HeightPx - 4) is not null)
+        throw new Exception("out-of-zone cursor selected a target");
+});
+
+Run("physical ruler calibration uses real screen pixels", () =>
+{
+    var display = new DisplayProfile { WidthPx = 3840, HeightPx = 2160, DiagonalInches = 55, CalibrationScale = 1 };
+    const double visibleReferencePixels = 620;
+    const double measuredReferenceInches = 7.75;
+    var scale = DisplayGeometry.CalibrationScaleFromReference(display, visibleReferencePixels, measuredReferenceInches);
+    display.CalibrationScale = scale;
+    Near(DisplayGeometry.PixelsPerInch(display), 80, 0.0001, "calibrated ppi");
+    var zone = new VirtualMonitorZone { DiagonalInches = 25, AspectWidth = 16, AspectHeight = 9 };
+    var rect = DisplayGeometry.ZoneToPixels(display, zone, false);
+    Near(DisplayGeometry.PhysicalDiagonalFromPixels(display, rect.Width, rect.Height), 25, 0.02, "25-inch diagonal");
+});
+
+Run("invalid ruler input is rejected", () =>
+{
+    var display = new DisplayProfile { WidthPx = 1920, HeightPx = 1080, DiagonalInches = 27 };
+    foreach (var invalid in new[] { double.NaN, 0d, double.PositiveInfinity })
+    {
+        try { DisplayGeometry.CalibrationScaleFromReference(display, 500, invalid); }
+        catch (ArgumentOutOfRangeException) { continue; }
+        throw new Exception("invalid measured ruler length was accepted");
+    }
+});
+
 if (failures.Count > 0)
 {
     Console.Error.WriteLine($"MUX.Core validation failed ({failures.Count}):");
@@ -121,7 +160,7 @@ if (failures.Count > 0)
     return 1;
 }
 
-Console.WriteLine("MUX.Core validation passed: 10/10 checks.");
+Console.WriteLine("MUX.Core validation passed: 13/13 checks.");
 return 0;
 
 void Run(string name, Action test)

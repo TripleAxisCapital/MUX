@@ -40,6 +40,32 @@ public static class DisplayGeometry
         return diagonalPixels / display.DiagonalInches * display.CalibrationScale;
     }
 
+    /// <summary>
+    /// Uses the measured physical length of a rendered reference between its two
+    /// screen-pixel endpoints. This avoids mistaking WPF device-independent units
+    /// for physical pixels on high-DPI and mixed-DPI displays.
+    /// </summary>
+    public static double CalibrationScaleFromReference(DisplayProfile display, double referencePixels, double measuredInches)
+    {
+        ArgumentNullException.ThrowIfNull(display);
+        ValidatePositive(display.WidthPx, nameof(display.WidthPx));
+        ValidatePositive(display.HeightPx, nameof(display.HeightPx));
+        ValidatePositive(display.DiagonalInches, nameof(display.DiagonalInches));
+        ValidatePositive(referencePixels, nameof(referencePixels));
+        ValidatePositive(measuredInches, nameof(measuredInches));
+        var displayDiagonalPx = Math.Sqrt((double)display.WidthPx * display.WidthPx +
+                                          (double)display.HeightPx * display.HeightPx);
+        return (referencePixels / measuredInches) * display.DiagonalInches / displayDiagonalPx;
+    }
+
+    /// <summary>Find the destination strictly under the physical mouse pointer.</summary>
+    public static VirtualMonitorZone? FindZoneAtPoint(DisplayProfile display, LayoutProfile layout, int screenX, int screenY)
+    {
+        ArgumentNullException.ThrowIfNull(display);
+        ArgumentNullException.ThrowIfNull(layout);
+        return FindZoneContainingPoint(display, layout, screenX, screenY);
+    }
+
     public static SizeD DisplayPhysicalSize(DisplayProfile display)
     {
         var ppi = PixelsPerInch(display);

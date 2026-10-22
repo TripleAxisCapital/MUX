@@ -37,6 +37,17 @@ public partial class MainWindow : Window
     {
         _loading = true;
         _state = await _store.LoadAsync();
+        // Older installs kept outlines visible and required Shift by default.
+        // Migrate their visual defaults once without deleting any saved layouts.
+        var migrateDragMode = _state.SchemaVersion < 7;
+        if (migrateDragMode)
+        {
+            _state.SchemaVersion = 7;
+            _state.ShowZoneOutlines = false;
+            _state.SnapRequiresShift = false;
+        }
+        if (string.IsNullOrWhiteSpace(_state.SnapHighlightColor))
+            _state.SnapHighlightColor = "#30D158";
         try
         {
             _state.LaunchAtStartup = _startupService.Reconcile(_state.LaunchAtStartup);
@@ -52,6 +63,7 @@ public partial class MainWindow : Window
         RefreshAll();
         _loading = false;
         ConfigureWindowManager();
+        if (migrateDragMode) await SaveStateAsync();
 
         if (Environment.GetCommandLineArgs().Any(a => a.Equals("--background", StringComparison.OrdinalIgnoreCase)))
         {
@@ -163,6 +175,7 @@ public partial class MainWindow : Window
         SnapCheck.IsChecked = _state.SnapOnDrag;
         StartupCheck.IsChecked = SafeStartupEnabled();
         StartupCheck.ToolTip = "Start MUX in the system tray when signing in to Windows.";
+        SnapColorPreview.Background = new SolidColorBrush(ZoneDragPreviewService.ParseColor(_state.SnapHighlightColor));
         RefreshEngineVisual();
         RefreshZoneInspector(null);
     }
@@ -184,12 +197,13 @@ public partial class MainWindow : Window
     private void ConfigureWindowManager()
     {
         _windowManager.Configure(_display, _layout, _state.Enabled, _state.SnapOnDrag);
+        _windowManager.SetDragHighlightColor(_state.SnapHighlightColor);
     }
 
     private void RefreshEngineVisual()
     {
         EngineSubtitle.Text = _state.Enabled ? "Active" : "Paused";
-        EngineDot.Background = new SolidColorBrush(_state.Enabled ? Color.FromRgb(140, 255, 176) : Color.FromRgb(98, 98, 106));
+        EngineDot.Background = new SolidColorBrush(_state.Enabled ? Color.FromRgb(231, 231, 231) : Color.FromRgb(98, 98, 98));
     }
 
     private async void EngineToggle_Click(object sender, RoutedEventArgs e)

@@ -112,7 +112,7 @@ public partial class MainWindow
 
         _outlineCheck = new CheckBox
         {
-            Content = "Show monitor outlines",
+            Content = "Always show outlines (optional)",
             Margin = new Thickness(0, 16, 0, 0)
         };
         _outlineCheck.SetResourceReference(FrameworkElement.StyleProperty, "MuxCheckBox");
@@ -121,7 +121,7 @@ public partial class MainWindow
 
         panel.Children.Add(new TextBlock
         {
-            Text = "Default outline thickness",
+            Text = "Drag target border thickness",
             Foreground = muted,
             FontSize = 11,
             Margin = new Thickness(2, 12, 0, 7)

@@ -21,6 +21,8 @@ public sealed class WindowManagerService : IDisposable
     private const int SwRestore = 9;
     private const uint SwpNoActivate = 0x0010;
     private const int VkShift = 0x10;
+    private const int DragMotionThresholdPx = 6;
+    private const int ResizeTolerancePx = 3;
     private const int GwlExStyle = -20;
     private const long WsExToolWindow = 0x00000080L;
     private const int NativeMaximizeCorrectionDelayMs = 140;
@@ -35,22 +37,36 @@ public sealed class WindowManagerService : IDisposable
     private readonly ConcurrentDictionary<IntPtr, byte> _pendingLocationEvents = new();
     private readonly Dispatcher _dispatcher;
     private readonly ZoneOutlineService _outlineService = new();
+    private readonly ZoneDragPreviewService _dragPreview = new();
+    private readonly DispatcherTimer _dragTimer;
     private DisplayProfile? _display;
     private LayoutProfile? _layout;
     private bool _enabled;
     private bool _snapOnDrag;
-    private bool _snapRequiresShift = true;
-    private bool _showOutlines = true;
+    private bool _snapRequiresShift;
+    private bool _showOutlines;
     private double _outlineThickness = 2.0;
+    private string _dragHighlightColor = "#30D158";
+    private IntPtr _dragWindow;
+    private PixelRect _dragOrigin;
+    private bool _dragMoved;
+    private bool _dragResized;
+    private Guid? _dragHoveredZone;
 
     public WindowManagerService()
     {
         _eventDelegate = OnWinEvent;
         _dispatcher = System.Windows.Application.Current.Dispatcher;
+        _dragTimer = new DispatcherTimer(DispatcherPriority.Background, _dispatcher)
+        {
+            Interval = TimeSpan.FromMilliseconds(35)
+        };
+        _dragTimer.Tick += (_, _) => UpdateDragTarget();
     }
 
     public void Configure(DisplayProfile? display, LayoutProfile? layout, bool enabled, bool snapOnDrag)
     {
+        EndDragPreview();
         _display = display;
         _layout = layout;
         _enabled = enabled;
@@ -70,6 +86,12 @@ public sealed class WindowManagerService : IDisposable
     public void SetSnapRequiresShift(bool requiresShift)
     {
         _snapRequiresShift = requiresShift;
+    }
+
+    public void SetDragHighlightColor(string color)
+    {
+        _dragHighlightColor = color;
+        if (_dragWindow != IntPtr.Zero) UpdateDragTarget();
     }
 
     public void SetOutlineOptions(bool visible, double thickness)
@@ -219,6 +241,7 @@ public sealed class WindowManagerService : IDisposable
 
         if (eventType == EventObjectDestroy)
         {
+            if (_dragWindow == hwnd) EndDragPreview();
             ForgetWindow(hwnd);
             return;
         }
@@ -231,21 +254,26 @@ public sealed class WindowManagerService : IDisposable
         if (eventType == EventSystemMoveSizeStart)
         {
             _pseudoMaximized.TryRemove(hwnd, out _);
+            BeginDragPreview(hwnd);
             return;
         }
 
         if (eventType == EventSystemMoveSizeEnd)
         {
+            // Resolve the target under the cursor at release, not the dragged
+            // window's center. Release always hides the overlays, even on failure.
+            UpdateDragTarget();
+            var isMovingThisWindow = _dragWindow == hwnd && _dragMoved && !_dragResized;
+            var hoveredId = _dragHoveredZone;
+            EndDragPreview();
+
             if (TryGetWindowRect(hwnd, out var movedRect))
             {
                 TrackNormalWindow(hwnd, movedRect);
-
-                // A linked formation must not be split by sizing only its leader
-                // to one zone. Its group service owns the formation's final snap.
-                if (IsZoneSnapActiveForCurrentGesture() &&
-                    !ReliableWindowLinkService.Shared.IsLinked(hwnd))
+                if (isMovingThisWindow && IsZoneSnapActiveForCurrentGesture() &&
+                    !ReliableWindowLinkService.Shared.IsLinked(hwnd) && hoveredId is Guid zoneId)
                 {
-                    var zone = DisplayGeometry.FindBestZone(_display, _layout, movedRect);
+                    var zone = _layout.Zones.FirstOrDefault(item => item.Id == zoneId);
                     if (zone is not null)
                     {
                         _pseudoMaximized[hwnd] = movedRect;
@@ -268,6 +296,68 @@ public sealed class WindowManagerService : IDisposable
         {
             TrackNormalWindow(hwnd);
         }
+    }
+
+    private void BeginDragPreview(IntPtr hwnd)
+    {
+        EndDragPreview();
+        if (!_snapOnDrag || !IsEligibleWindow(hwnd) || !TryGetWindowRect(hwnd, out var rect))
+        {
+            return;
+        }
+
+        _dragWindow = hwnd;
+        _dragOrigin = rect;
+        _dragMoved = false;
+        _dragResized = false;
+        _dragHoveredZone = null;
+        _dragTimer.Start();
+    }
+
+    private void UpdateDragTarget()
+    {
+        if (_dragWindow == IntPtr.Zero || _display is null || _layout is null ||
+            !_enabled || !_snapOnDrag || !IsWindow(_dragWindow) ||
+            !TryGetWindowRect(_dragWindow, out var rect))
+        {
+            EndDragPreview();
+            return;
+        }
+
+        if (Math.Abs(rect.Width - _dragOrigin.Width) > ResizeTolerancePx ||
+            Math.Abs(rect.Height - _dragOrigin.Height) > ResizeTolerancePx)
+        {
+            _dragResized = true;
+        }
+
+        if (!_dragMoved)
+        {
+            _dragMoved = Math.Abs(rect.Left - _dragOrigin.Left) > DragMotionThresholdPx ||
+                         Math.Abs(rect.Top - _dragOrigin.Top) > DragMotionThresholdPx;
+        }
+
+        // WinEvent also reports resize gestures. They must never choose a drop zone.
+        if (!_dragMoved || _dragResized || !IsZoneSnapActiveForCurrentGesture() ||
+            ReliableWindowLinkService.Shared.IsLinked(_dragWindow) || !GetCursorPos(out var mouse))
+        {
+            _dragHoveredZone = null;
+            _dragPreview.Hide();
+            return;
+        }
+
+        var hovered = DisplayGeometry.FindZoneAtPoint(_display, _layout, mouse.X, mouse.Y);
+        _dragHoveredZone = hovered?.Id;
+        _dragPreview.Render(_display, _layout, _dragHoveredZone, _dragHighlightColor, _outlineThickness);
+    }
+
+    private void EndDragPreview()
+    {
+        _dragTimer.Stop();
+        _dragPreview.Hide();
+        _dragWindow = IntPtr.Zero;
+        _dragMoved = false;
+        _dragResized = false;
+        _dragHoveredZone = null;
     }
 
     private void HandleNativeMaximize(IntPtr hwnd)
@@ -535,6 +625,8 @@ public sealed class WindowManagerService : IDisposable
 
     public void Dispose()
     {
+        EndDragPreview();
+        _dragPreview.Dispose();
         _outlineService.Dispose();
         foreach (var hook in _hooks)
         {
@@ -585,6 +677,10 @@ public sealed class WindowManagerService : IDisposable
 
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(int vKey);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetCursorPos(out Point point);
 
     [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out int processId);

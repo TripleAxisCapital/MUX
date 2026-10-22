@@ -356,3 +356,22 @@ For Option B, see [Virtual Displays](docs/VIRTUAL-DISPLAYS.md).
   <strong>MUX</strong><br />
   <sub>One display. Many.</sub>
 </div>
+
+
+### Invisible drag targets and physical calibration
+
+MUX hides workspace zone outlines during normal use. When you drag an eligible window,
+the possible snap targets appear; hover a target to preview it in **green** (default),
+then release to fit the window into that zone. Set **Settings → Drag targets →
+Choose highlight color** to select a custom hover color. For older profiles, MUX
+switches the original always-visible/Shift-only defaults to hidden/automatic once.
+You can opt into persistent outlines or Shift-only snapping under Settings.
+
+For accurate sizes, choose the physical display in MUX, enter its **physical diagonal**
+(not its width) and use **Settings → Physical accuracy → Calibrate selected display**.
+Measure the line between its two ticks using a real ruler; enter its observed inches
+and choose **Apply correction**. Measure the redrawn reference again to verify it
+is 6 inches (±3%), then choose **Save**. Cancel restores the previous calibration.
+Calibration is stored per physical display and applied to every workspace on that
+display. A 25-inch virtual zone is **25 inches diagonally**, not 25 inches wide.
+For mixed-DPI displays the calibration line is measured in native screen pixels.

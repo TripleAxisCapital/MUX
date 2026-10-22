@@ -58,6 +58,58 @@ public static class DisplayGeometry
         return (referencePixels / measuredInches) * display.DiagonalInches / displayDiagonalPx;
     }
 
+    /// <summary>
+    /// Calibrate a physical display from the exact width and height of a rectangular
+    /// reference measured in DEVICE pixels, not WPF device-independent pixels.
+    /// The diagonal specified by the user is the outer-corner diagonal in inches.
+    /// </summary>
+    public static double CalibrationScaleFromRectangle(
+        DisplayProfile display, double widthPixels, double heightPixels, double knownDiagonalInches)
+    {
+        ArgumentNullException.ThrowIfNull(display);
+        ValidatePositive(widthPixels, nameof(widthPixels));
+        ValidatePositive(heightPixels, nameof(heightPixels));
+        ValidatePositive(knownDiagonalInches, nameof(knownDiagonalInches));
+        var diagonalPixels = Math.Sqrt(widthPixels * widthPixels + heightPixels * heightPixels);
+        return CalibrationScaleFromReference(display, diagonalPixels, knownDiagonalInches);
+    }
+
+    /// <summary>
+    /// Device-pixel diagonal for a requested physical rectangular reference.
+    /// Both dimensions use one calibrated PPI, independent of the reference's aspect ratio.
+    /// </summary>
+    public static PixelSize PixelsFromKnownDiagonal(DisplayProfile display, double diagonalInches, double aspectWidth, double aspectHeight)
+        => PixelsFromPhysicalDiagonal(display, diagonalInches, aspectWidth, aspectHeight);
+
+    /// <summary>
+    /// Windows may include invisible resize margins in GetWindowRect. Convert a
+    /// desired *visible* frame rectangle into the matching raw SetWindowPos rectangle
+    /// using margins observed on the same HWND (DWM extended-frame bounds).
+    /// </summary>
+    public static PixelRect RawRectForVisibleTarget(PixelRect currentRaw, PixelRect currentVisible, PixelRect desiredVisible)
+    {
+        if (currentRaw.Width <= 0 || currentRaw.Height <= 0 ||
+            currentVisible.Width <= 0 || currentVisible.Height <= 0 ||
+            desiredVisible.Width <= 0 || desiredVisible.Height <= 0)
+            throw new ArgumentOutOfRangeException(nameof(currentRaw), "All window rectangles must have positive dimensions.");
+
+        var leftInset = currentVisible.Left - currentRaw.Left;
+        var topInset = currentVisible.Top - currentRaw.Top;
+        var rightInset = currentRaw.Right - currentVisible.Right;
+        var bottomInset = currentRaw.Bottom - currentVisible.Bottom;
+
+        // Unknown custom shadows or pathological DWM frames must not create a
+        // runaway-sized SetWindowPos target; fall back to the requested rectangle.
+        if (new[] { leftInset, topInset, rightInset, bottomInset }
+            .Any(inset => inset < -16 || inset > 64))
+            return desiredVisible;
+
+        return new PixelRect(desiredVisible.Left - leftInset,
+                             desiredVisible.Top - topInset,
+                             Math.Max(1, desiredVisible.Width + leftInset + rightInset),
+                             Math.Max(1, desiredVisible.Height + topInset + bottomInset));
+    }
+
     /// <summary>Find the destination strictly under the physical mouse pointer.</summary>
     public static VirtualMonitorZone? FindZoneAtPoint(DisplayProfile display, LayoutProfile layout, int screenX, int screenY)
     {

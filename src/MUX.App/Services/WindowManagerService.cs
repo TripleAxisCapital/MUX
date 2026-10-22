@@ -27,6 +27,7 @@ public sealed class WindowManagerService : IDisposable
     private const long WsExToolWindow = 0x00000080L;
     private const int NativeMaximizeCorrectionDelayMs = 140;
     private const int RectTolerancePx = 2;
+    private const int DwmwaExtendedFrameBounds = 9;
 
     private readonly WinEventDelegate _eventDelegate;
     private readonly List<IntPtr> _hooks = new();
@@ -279,6 +280,7 @@ public sealed class WindowManagerService : IDisposable
                         _pseudoMaximized[hwnd] = movedRect;
                         _windowZones[hwnd] = zone.Id;
                         Suppress(hwnd, () => FitWindowToZone(hwnd, zone));
+                        ScheduleNativeMaximizeCorrection(hwnd, zone.Id);
                     }
                 }
             }
@@ -504,7 +506,7 @@ public sealed class WindowManagerService : IDisposable
             }
 
             var target = DisplayGeometry.ZoneToPixels(_display, zone);
-            var needsCorrection = IsZoomed(hwnd) || !TryGetWindowRect(hwnd, out var current) || !RectsApproximatelyEqual(current, target);
+            var needsCorrection = IsZoomed(hwnd) || !TryGetVisibleWindowRect(hwnd, out var current) || !RectsApproximatelyEqual(current, target);
             if (!needsCorrection)
             {
                 return;
@@ -517,7 +519,7 @@ public sealed class WindowManagerService : IDisposable
                     ShowWindow(hwnd, SwRestore);
                 }
 
-                SetWindowRect(hwnd, target);
+                FitWindowToZone(hwnd, zone);
             });
         };
 
@@ -531,7 +533,28 @@ public sealed class WindowManagerService : IDisposable
             return;
         }
 
-        SetWindowRect(hwnd, DisplayGeometry.ZoneToPixels(_display, zone));
+        var target = DisplayGeometry.ZoneToPixels(_display, zone);
+        if (TryGetWindowRect(hwnd, out var raw) && TryGetVisibleWindowRect(hwnd, out var visible))
+        {
+            // DWM reports the actual visible frame, excluding invisible resize borders.
+            // Align this real visible frame with the calibrated physical zone.
+            SetWindowRect(hwnd, DisplayGeometry.RawRectForVisibleTarget(raw, visible, target));
+        }
+        else
+        {
+            SetWindowRect(hwnd, target);
+        }
+    }
+
+    private static bool TryGetVisibleWindowRect(IntPtr hwnd, out PixelRect rect)
+    {
+        if (DwmGetWindowAttribute(hwnd, DwmwaExtendedFrameBounds, out var native, Marshal.SizeOf<Rect>()) == 0 &&
+            native.Right > native.Left && native.Bottom > native.Top)
+        {
+            rect = new PixelRect(native.Left, native.Top, native.Right - native.Left, native.Bottom - native.Top);
+            return true;
+        }
+        return TryGetWindowRect(hwnd, out rect);
     }
 
     private void MoveWindowPreservingSize(IntPtr hwnd, PixelRect current, VirtualMonitorZone zone)
@@ -681,6 +704,9 @@ public sealed class WindowManagerService : IDisposable
 
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(int vKey);
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmGetWindowAttribute(IntPtr hwnd, int attribute, out Rect value, int size);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]

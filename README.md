@@ -360,18 +360,34 @@ For Option B, see [Virtual Displays](docs/VIRTUAL-DISPLAYS.md).
 
 ### Invisible drag targets and physical calibration
 
-MUX hides workspace zone outlines during normal use. When you drag an eligible window,
-the possible snap targets appear; hover a target to preview it in **green** (default),
-then release to fit the window into that zone. Set **Settings → Drag targets →
-Choose highlight color** to select a custom hover color. For older profiles, MUX
-switches the original always-visible/Shift-only defaults to hidden/automatic once.
-You can opt into persistent outlines or Shift-only snapping under Settings.
+MUX hides workspace zone outlines during normal use. While dragging an eligible
+application, the available zones appear. Hover a zone to highlight it (green
+by default), then release to place the window. Customize the color in Settings.
+Persistent outlines and Shift-only snapping remain optional in Settings.
 
-For accurate sizes, choose the physical display in MUX, enter its **physical diagonal**
-(not its width) and use **Settings → Physical accuracy → Calibrate selected display**.
-Measure the line between its two ticks using a real ruler; enter its observed inches
-and choose **Apply correction**. Measure the redrawn reference again to verify it
-is 6 inches (±3%), then choose **Save**. Cancel restores the previous calibration.
-Calibration is stored per physical display and applied to every workspace on that
-display. A 25-inch virtual zone is **25 inches diagonally**, not 25 inches wide.
-For mixed-DPI displays the calibration line is measured in native screen pixels.
+#### Calibrate with an actual 10-inch diagonal frame
+
+1. In MUX, choose the correct **physical display** from the Display selector.
+2. Open **Settings → Physical accuracy → Calibrate selected display**.
+3. A border-only 16:9 rectangle appears on that display. Use a **real ruler or
+   tape measure** from the *upper-left outer corner* to the *lower-right outer
+   corner*, across the diagonal.
+4. Drag the white lower-right handle until the **actual physical diagonal
+   measures exactly 10 inches**. Do not enter or estimate pixel dimensions.
+5. Click **Match 10-inch reference**. MUX measures the rectangle in native
+   Windows screen pixels and calculates real pixels-per-inch.
+6. MUX draws a **second reference** of up to 15 inches diagonally, where the
+   available display space permits. Measure this **new** frame diagonally and
+   enter the actual measured number. Only a measurement within 1.5% of the
+   second reference passes verification.
+7. Click **Verify and save**. If verification fails, return to the 10-inch
+   reference and adjust it instead of accepting an incorrect calibration.
+   **Cancel never changes the saved calibration.**
+
+Calibration is saved per physical monitor. Once saved, **a 25-inch virtual
+zone means a 25-inch visible diagonal** irrespective of aspect ratio (16:9,
+4:3, etc.), subject to Windows/application minimum window sizes.
+Snap placement accounts for Windows' invisible resize margins using DWM
+visible frame bounds. Keep the selected physical display's diagonal correctly
+entered; if you change hardware, resolution, or display scaling, verify the
+reference again. Recalibration is accessible from Settings anytime.

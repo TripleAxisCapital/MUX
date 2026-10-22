@@ -153,6 +153,93 @@ Run("invalid ruler input is rejected", () =>
     }
 });
 
+Run("10-inch reference frame calibrates exact diagonal", () =>
+{
+    var display = new DisplayProfile { WidthPx = 3840, HeightPx = 2160, DiagonalInches = 55, CalibrationScale = 1 };
+    // The operator physically measured the 16:9 frame at precisely 10 inches.
+    const double actualPpi = 91.0;
+    var width = actualPpi * 10 * 16 / Math.Sqrt(16 * 16 + 9 * 9);
+    var height = actualPpi * 10 * 9 / Math.Sqrt(16 * 16 + 9 * 9);
+    display.CalibrationScale = DisplayGeometry.CalibrationScaleFromRectangle(display, width, height, 10);
+    Near(DisplayGeometry.PixelsPerInch(display), actualPpi, 0.000001, "physical PPI");
+});
+
+Run("independent 15-inch calibration verification uses same physical dimensions", () =>
+{
+    var display = new DisplayProfile { WidthPx = 5120, HeightPx = 2880, DiagonalInches = 42 };
+    const double ppi = 132.5;
+    var hyp = Math.Sqrt(16d * 16 + 9d * 9);
+    var width = ppi * 10 * 16 / hyp;
+    var height = ppi * 10 * 9 / hyp;
+    display.CalibrationScale = DisplayGeometry.CalibrationScaleFromRectangle(display, width, height, 10);
+    var physical15 = DisplayGeometry.PixelsFromKnownDiagonal(display, 15, 16, 9);
+    Near(DisplayGeometry.PhysicalDiagonalFromPixels(display, physical15.Width, physical15.Height), 15, 0.015, "verification");
+});
+
+Run("calibration remains consistent across 16:9, 4:3 and 9:16 zones", () =>
+{
+    var display = new DisplayProfile { WidthPx = 3840, HeightPx = 2160, DiagonalInches = 45 };
+    display.CalibrationScale = DisplayGeometry.CalibrationScaleFromRectangle(display, 1000, 562.5, 10);
+    foreach (var (w, h) in new[] { (16d, 9d), (4d, 3d), (9d, 16d) })
+    {
+        var zone = new VirtualMonitorZone { DiagonalInches = 25, AspectWidth = w, AspectHeight = h };
+        var rect = DisplayGeometry.ZoneToPixels(display, zone, includeDisplayOffset: false);
+        Near(DisplayGeometry.PhysicalDiagonalFromPixels(display, rect.Width, rect.Height),
+             25, 0.02, "25-inch window aspect ratio");
+    }
+});
+
+Run("high-DPI screen transform does not leak WPF dip units into physical PPI", () =>
+{
+    var display = new DisplayProfile { WidthPx = 3840, HeightPx = 2160, DiagonalInches = 48 };
+    // 125% Windows display scale: UI frame 640x360 DIPs -> 800x450 actual pixels.
+    const double wDip = 640, hDip = 360, scaleFactor = 1.25;
+    display.CalibrationScale = DisplayGeometry.CalibrationScaleFromRectangle(
+        display, wDip * scaleFactor, hDip * scaleFactor, 10);
+    Near(DisplayGeometry.PixelsPerInch(display), Math.Sqrt(800d * 800 + 450d * 450) / 10,
+         0.000001, "actual device pixel PPI");
+});
+
+Run("DWM invisible resize borders are compensated in window placement", () =>
+{
+    var raw = new PixelRect(90, 90, 820, 620);
+    var visible = new PixelRect(98, 92, 804, 610); // 8px on left/right, 2px top, 8px bottom
+    var target = new PixelRect(400, 200, 1200, 675);
+    var placed = DisplayGeometry.RawRectForVisibleTarget(raw, visible, target);
+    Near(placed.Left, 392, 0, "left");
+    Near(placed.Top, 198, 0, "top");
+    Near(placed.Width, 1216, 0, "width");
+    Near(placed.Height, 685, 0, "height");
+});
+
+Run("DWM compensation leaves borderless windows unchanged", () =>
+{
+    var target = new PixelRect(-2200, 100, 1000, 600);
+    var current = new PixelRect(10, 15, 500, 300);
+    if (DisplayGeometry.RawRectForVisibleTarget(current, current, target) != target)
+        throw new Exception("borderless target unexpectedly shifted");
+});
+
+Run("pathological invisible window margins do not distort target", () =>
+{
+    var target = new PixelRect(15, 20, 750, 500);
+    var corrected = DisplayGeometry.RawRectForVisibleTarget(
+        new PixelRect(0, 0, 900, 700), new PixelRect(130, 130, 500, 500), target);
+    if (corrected != target)
+        throw new Exception("unreasonable DWM margins were accepted");
+});
+
+Run("invalid rectangular reference length is rejected", () =>
+{
+    var display = new DisplayProfile { WidthPx = 3840, HeightPx = 2160, DiagonalInches = 40 };
+    foreach (var invalid in new[] { 0d, double.NaN, double.PositiveInfinity })
+    {
+        try { DisplayGeometry.CalibrationScaleFromRectangle(display, invalid, 200, 10); }
+        catch (ArgumentOutOfRangeException) { continue; }
+        throw new Exception("invalid pixel measurement was accepted");
+    }
+});
+
 if (failures.Count > 0)
 {
     Console.Error.WriteLine($"MUX.Core validation failed ({failures.Count}):");
@@ -160,7 +247,7 @@ if (failures.Count > 0)
     return 1;
 }
 
-Console.WriteLine("MUX.Core validation passed: 13/13 checks.");
+Console.WriteLine("MUX.Core validation passed: 21/21 checks.");
 return 0;
 
 void Run(string name, Action test)

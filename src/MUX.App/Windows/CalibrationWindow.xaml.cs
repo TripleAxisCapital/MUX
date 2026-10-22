@@ -1,7 +1,8 @@
 using System.Globalization;
 using System.Windows;
-using System.Windows.Input;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Input;
 using System.Windows.Media;
 using MUX.App.Services;
 using MUX.Core.Geometry;
@@ -9,173 +10,243 @@ using MUX.Core.Models;
 
 namespace MUX.App.Windows;
 
+/// <summary>
+/// Screen-physical 10-inch rectangular calibration. We read the actual corner
+/// coordinates through PointToScreen, so DPI scaling and WPF DIPs never enter
+/// the persisted pixels-per-inch calculation. The second step renders a different
+/// physical diagonal as an independent check before any calibration is committed.
+/// </summary>
 public partial class CalibrationWindow : Window
 {
-    private const double ReferenceInches = 6.0;
+    private const double CalibrationDiagonalInches = 10.0;
+    private const double DesiredCheckDiagonalInches = 15.0;
+    private const double AspectWidth = 16.0;
+    private const double AspectHeight = 9.0;
+    private const double MinimumFrameDiagonalPx = 125.0;
+    private const double MaximumVerificationErrorFraction = 0.015;
+
     private readonly DisplayProfile _display;
     private readonly double _originalScale;
-    private bool _hasAppliedCorrection;
+    private bool _calibrating;
+    private double _frameDiagonalPx;
+    private double _verificationInches = CalibrationDiagonalInches;
+    private double _lastUserMatchedDiagonalPx;
 
     public CalibrationWindow(DisplayProfile display)
     {
-        _display = display;
+        _display = display ?? throw new ArgumentNullException(nameof(display));
         _originalScale = display.CalibrationScale;
         InitializeComponent();
-        DisplayLabel.Text = $"{display.FriendlyName}  ·  {display.WidthPx} × {display.HeightPx} px  ·  {display.DiagonalInches:0.##} in diagonal";
+        DisplayLabel.Text = $"{display.FriendlyName} · {display.WidthPx} × {display.HeightPx} physical pixels";
         SourceInitialized += (_, _) => ScreenWindowService.FillDisplay(this, _display);
-        LineCanvas.SizeChanged += (_, _) => UpdateLine();
-        Loaded += (_, _) => UpdateLine();
-        PreviewKeyDown += OnPreviewKeyDown;
-    }
-
-    private void UpdateLine()
-    {
-        if (LineCanvas.ActualWidth < 100 || _display.WidthPx < 1)
+        Loaded += (_, _) =>
         {
+            _frameDiagonalPx = CalibrationDiagonalInches * DisplayGeometry.PixelsPerInch(_display);
+            RenderFrame();
+        };
+        ReferenceCanvas.SizeChanged += (_, _) =>
+        {
+            if (_frameDiagonalPx > 0) RenderFrame();
+        };
+        PreviewKeyDown += (_, args) =>
+        {
+            if (args.Key == Key.Escape)
+            {
+                CancelAndClose();
+                args.Handled = true;
+            }
+        };
+    }
+
+    private (double X, double Y) PixelsToDips()
+    {
+        var transform = PresentationSource.FromVisual(this)?.CompositionTarget?.TransformFromDevice
+                        ?? Matrix.Identity;
+        if (!(transform.M11 > 0) || !(transform.M22 > 0))
+            throw new InvalidOperationException("Windows did not provide the physical display DPI transform.");
+        return (transform.M11, transform.M22);
+    }
+
+    private double MaximumFrameDiagonalPixels()
+    {
+        var (xScale, yScale) = PixelsToDips();
+        var availableW = Math.Max(1, ReferenceCanvas.ActualWidth - 90) / xScale;
+        var availableH = Math.Max(1, ReferenceCanvas.ActualHeight - 90) / yScale;
+        var aspectHyp = Math.Sqrt(AspectWidth * AspectWidth + AspectHeight * AspectHeight);
+        return Math.Min(availableW * aspectHyp / AspectWidth, availableH * aspectHyp / AspectHeight);
+    }
+
+    private void RenderFrame()
+    {
+        if (ReferenceCanvas.ActualWidth < 150 || ReferenceCanvas.ActualHeight < 150)
             return;
-        }
 
-        // Per-monitor DPI awareness gives the true screen-pixel <-> WPF DIP transform.
-        // The reference length is deliberately not calculated from a system-wide DPI.
-        var dipPerPixel = PresentationSource.FromVisual(this)?.CompositionTarget?.TransformFromDevice.M11
-                          ?? ActualWidth / _display.WidthPx;
-        var requestedPixels = ReferenceInches * DisplayGeometry.PixelsPerInch(_display);
-        var widthDip = Math.Clamp(requestedPixels * dipPerPixel, 24, LineCanvas.ActualWidth - 40);
-        var x = (LineCanvas.ActualWidth - widthDip) / 2;
-        var y = Math.Max(16, LineCanvas.ActualHeight / 2);
+        var (xScale, yScale) = PixelsToDips();
+        var maximum = MaximumFrameDiagonalPixels();
+        _frameDiagonalPx = Math.Clamp(_frameDiagonalPx, MinimumFrameDiagonalPx, Math.Max(MinimumFrameDiagonalPx, maximum));
+        var hyp = Math.Sqrt(AspectWidth * AspectWidth + AspectHeight * AspectHeight);
+        var widthDip = _frameDiagonalPx * AspectWidth / hyp * xScale;
+        var heightDip = _frameDiagonalPx * AspectHeight / hyp * yScale;
+        ReferenceFrame.Width = widthDip;
+        ReferenceFrame.Height = heightDip;
 
-        MeasureLine.Width = widthDip;
-        Canvas.SetLeft(MeasureLine, x);
-        Canvas.SetTop(MeasureLine, y);
-        Canvas.SetLeft(LeftTick, x);
-        Canvas.SetTop(LeftTick, y - 12);
-        Canvas.SetLeft(RightTick, x + widthDip - 2);
-        Canvas.SetTop(RightTick, y - 12);
+        var left = Math.Max(14, (ReferenceCanvas.ActualWidth - widthDip) / 2);
+        var top = Math.Max(14, (ReferenceCanvas.ActualHeight - heightDip) / 2);
+        Canvas.SetLeft(ReferenceFrame, left);
+        Canvas.SetTop(ReferenceFrame, top);
+        Canvas.SetLeft(ResizeHandle, left + widthDip - ResizeHandle.Width / 2);
+        Canvas.SetTop(ResizeHandle, top + heightDip - ResizeHandle.Height / 2);
+        DiagonalLine.X1 = 1;
+        DiagonalLine.Y1 = 1;
+        DiagonalLine.X2 = Math.Max(2, widthDip - 1);
+        DiagonalLine.Y2 = Math.Max(2, heightDip - 1);
+
+        PixelDimensionsText.Text = _calibrating
+            ? $"Verification target: {_verificationInches:0.0} inches diagonal"
+            : "Drag ↘ to resize · Fixed 16:9 shape · Free physical measurement";
     }
 
-    private double GetRenderedReferencePixels()
+    private void ResizeHandle_DragDelta(object sender, DragDeltaEventArgs e)
     {
-        // PointToScreen reports device pixels, not WPF DIPs. This also handles
-        // displays on the left of the primary monitor and fractional Windows scaling.
-        var left = Canvas.GetLeft(MeasureLine);
-        var y = Canvas.GetTop(MeasureLine);
-        var first = LineCanvas.PointToScreen(new Point(left, y));
-        var last = LineCanvas.PointToScreen(new Point(left + MeasureLine.Width, y));
-        return Math.Abs(last.X - first.X);
-    }
-
-    private bool TryReadMeasurement(out double inches)
-    {
+        if (_calibrating) return;
+        var (xScale, yScale) = PixelsToDips();
+        var hyp = Math.Sqrt(AspectWidth * AspectWidth + AspectHeight * AspectHeight);
+        var changeInPhysicalDiagonalPixels =
+            (e.HorizontalChange / xScale * AspectWidth +
+             e.VerticalChange / yScale * AspectHeight) / hyp;
+        _frameDiagonalPx = Math.Clamp(_frameDiagonalPx + changeInPhysicalDiagonalPixels,
+            MinimumFrameDiagonalPx, Math.Max(MinimumFrameDiagonalPx, MaximumFrameDiagonalPixels()));
+        RenderFrame();
         ErrorText.Visibility = Visibility.Collapsed;
-        var entered = (MeasuredBox.Text ?? "").Trim();
-        if (!double.TryParse(entered, NumberStyles.Float, CultureInfo.CurrentCulture, out inches) &&
-            !double.TryParse(entered, NumberStyles.Float, CultureInfo.InvariantCulture, out inches))
-        {
-            ShowError("Enter the ruler measurement in inches, such as 6.25.");
-            return false;
-        }
-
-        if (!double.IsFinite(inches) || inches < 1 || inches > 48)
-        {
-            ShowError("Enter a measured length between 1 and 48 inches.");
-            return false;
-        }
-
-        return true;
     }
 
-    private void Calibrate_Click(object sender, RoutedEventArgs e)
+    /// <summary>Get the actual native Windows pixels between OUTER border corners.</summary>
+    private (double WidthPx, double HeightPx) MeasureActualScreenPixels()
     {
-        if (!TryReadMeasurement(out var measured))
-        {
-            return;
-        }
-
-        var referencePixels = GetRenderedReferencePixels();
-        if (!double.IsFinite(referencePixels) || referencePixels < 50)
-        {
-            ShowError("The reference did not render correctly. Check the selected display.");
-            return;
-        }
-
-        var newScale = DisplayGeometry.CalibrationScaleFromReference(_display, referencePixels, measured);
-        if (!double.IsFinite(newScale) || newScale < 0.2 || newScale > 5.0)
-        {
-            ShowError("That measurement is inconsistent with the selected screen. Check the ruler and display.");
-            return;
-        }
-
-        _display.CalibrationScale = newScale;
-        _hasAppliedCorrection = true;
-        SaveCalibrationButton.IsEnabled = true;
-        ApplyButton.Content = "Adjust again";
-        StepLabel.Text = "STEP 2 / 2  ·  VERIFY";
-        InstructionLabel.Text = "Measure the corrected line again. It should be approximately 6.00 inches.";
-        StatusLabel.Text = $"Calibrated to {DisplayGeometry.PixelsPerInch(_display):0.0} physical pixels per inch. Enter the new measurement to verify.";
-        MeasuredBox.Text = ReferenceInches.ToString("0.00", CultureInfo.CurrentCulture);
-        UpdateLine();
-        MeasuredBox.Focus();
-        MeasuredBox.SelectAll();
+        ReferenceFrame.UpdateLayout();
+        var first = ReferenceFrame.PointToScreen(new Point(0, 0));
+        var last = ReferenceFrame.PointToScreen(
+            new Point(ReferenceFrame.ActualWidth, ReferenceFrame.ActualHeight));
+        return (Math.Abs(last.X - first.X), Math.Abs(last.Y - first.Y));
     }
 
-    private void Save_Click(object sender, RoutedEventArgs e)
+    private void ActionButton_Click(object sender, RoutedEventArgs e)
     {
-        if (!_hasAppliedCorrection || !TryReadMeasurement(out var verification))
+        if (_calibrating)
         {
+            // Reopen adjustment without committing an unverified candidate.
+            _display.CalibrationScale = _originalScale;
+            _calibrating = false;
+            _frameDiagonalPx = _lastUserMatchedDiagonalPx > 0
+                ? _lastUserMatchedDiagonalPx : CalibrationDiagonalInches * DisplayGeometry.PixelsPerInch(_display);
+            ResizeHandle.Visibility = Visibility.Visible;
+            FrameLabel.Text = "10-INCH REFERENCE";
+            StepText.Text = "01 / Set 10 inches";
+            InstructionText.Text = "Drag the white corner handle until the OUTER diagonal of the rectangle measures exactly 10 inches with a ruler.";
+            ActionButton.Content = "Match 10-inch reference";
+            SaveButton.Visibility = Visibility.Collapsed;
+            VerificationLabel.Visibility = Visibility.Collapsed;
+            VerificationBox.Visibility = Visibility.Collapsed;
+            ErrorText.Visibility = Visibility.Collapsed;
+            RenderFrame();
             return;
         }
 
-        // Reject a visibly wrong correction; allow normal ruler/antialias tolerance.
-        if (Math.Abs(verification - ReferenceInches) > 0.18)
+        try
         {
-            ShowError("The verification differs by over 3%. Enter the new measured length and select Adjust again.");
+            var (widthPixels, heightPixels) = MeasureActualScreenPixels();
+            var measuredPixels = Math.Sqrt(widthPixels * widthPixels + heightPixels * heightPixels);
+            if (measuredPixels < MinimumFrameDiagonalPx ||
+                measuredPixels > Math.Sqrt((double)_display.WidthPx * _display.WidthPx +
+                                           (double)_display.HeightPx * _display.HeightPx))
+            {
+                ShowError("Unable to measure the rectangle reliably on this monitor.");
+                return;
+            }
+
+            var scale = DisplayGeometry.CalibrationScaleFromRectangle(
+                _display, widthPixels, heightPixels, CalibrationDiagonalInches);
+            if (!double.IsFinite(scale) || scale is < 0.2 or > 5.0)
+            {
+                ShowError("The reference size is outside the supported calibration range.");
+                return;
+            }
+
+            _lastUserMatchedDiagonalPx = measuredPixels;
+            _display.CalibrationScale = scale;
+            _calibrating = true;
+            ResizeHandle.Visibility = Visibility.Collapsed;
+            _verificationInches = CalculateVerificationDiagonal();
+            _frameDiagonalPx = _verificationInches * DisplayGeometry.PixelsPerInch(_display);
+            FrameLabel.Text = $"{_verificationInches:0.#}-INCH VERIFICATION";
+            StepText.Text = "02 / Verify physical size";
+            InstructionText.Text = $"Measure the NEW rectangle diagonally. It should now be {_verificationInches:0.#} inches. Enter its actual measured diagonal below.";
+            VerificationLabel.Visibility = Visibility.Visible;
+            VerificationBox.Visibility = Visibility.Visible;
+            VerificationBox.Text = "";
+            ActionButton.Content = "Adjust reference again";
+            SaveButton.Visibility = Visibility.Visible;
+            RenderFrame();
+            VerificationBox.Focus();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
+        {
+            ShowError("Calibration could not determine physical pixel dimensions: " + ex.Message);
+        }
+    }
+
+    private double CalculateVerificationDiagonal()
+    {
+        var maxPhysicalDiagonal = MaximumFrameDiagonalPixels() /
+                                  DisplayGeometry.PixelsPerInch(_display);
+        var test = Math.Min(DesiredCheckDiagonalInches, Math.Floor((maxPhysicalDiagonal - 0.4) * 2) / 2);
+        return test > CalibrationDiagonalInches + 0.5 ? test : CalibrationDiagonalInches;
+    }
+
+    private void SaveButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_calibrating) return;
+        if (!double.TryParse(VerificationBox.Text, NumberStyles.Float, CultureInfo.CurrentCulture, out var actual)
+            && !double.TryParse(VerificationBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out actual))
+        {
+            ShowError("Enter the diagonal you measured using your tape or ruler.");
+            return;
+        }
+
+        if (!double.IsFinite(actual) || actual <= 0)
+        {
+            ShowError("Please enter a valid positive diagonal measurement.");
+            return;
+        }
+
+        var relativeError = Math.Abs(actual / _verificationInches - 1.0);
+        if (relativeError > MaximumVerificationErrorFraction)
+        {
+            ShowError($"Verification is {relativeError:P1} off the target. Calibration was NOT saved. Select Adjust reference again and try once more.");
             return;
         }
 
         DialogResult = true;
     }
 
-    private void Reset_Click(object sender, RoutedEventArgs e)
-    {
-        _display.CalibrationScale = 1.0;
-        _hasAppliedCorrection = false;
-        SaveCalibrationButton.IsEnabled = false;
-        ApplyButton.Content = "Apply correction";
-        StepLabel.Text = "STEP 1 / 2  ·  MEASURE";
-        InstructionLabel.Text = "Enter the actual length of the line, not the expected length.";
-        StatusLabel.Text = "Reference reset to the physical display diagonal. Measure the line between the ticks.";
-        MeasuredBox.Text = ReferenceInches.ToString("0.00", CultureInfo.CurrentCulture);
-        ErrorText.Visibility = Visibility.Collapsed;
-        UpdateLine();
-    }
+    private void Cancel_Click(object sender, RoutedEventArgs e) => CancelAndClose();
 
-    private void Cancel_Click(object sender, RoutedEventArgs e)
+    private void CancelAndClose()
     {
         _display.CalibrationScale = _originalScale;
         DialogResult = false;
     }
 
-    private void OnPreviewKeyDown(object sender, KeyEventArgs e)
-    {
-        if (e.Key == Key.Escape)
-        {
-            _display.CalibrationScale = _originalScale;
-            DialogResult = false;
-        }
-    }
-
     protected override void OnClosed(EventArgs e)
     {
         if (DialogResult != true)
-        {
             _display.CalibrationScale = _originalScale;
-        }
         base.OnClosed(e);
     }
 
-    private void ShowError(string text)
+    private void ShowError(string message)
     {
-        ErrorText.Text = text;
+        ErrorText.Text = message;
         ErrorText.Visibility = Visibility.Visible;
     }
 }

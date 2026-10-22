@@ -223,6 +223,24 @@ public partial class App
         return (Icon)SystemIcons.Application.Clone();
     }
 
+    private void RepairStartMenuShortcutSafely()
+    {
+        if (_updateService?.IsManagedInstall != true)
+        {
+            return;
+        }
+
+        try
+        {
+            StartMenuShortcutService.Repair();
+        }
+        catch (Exception exception)
+        {
+            // A broken or locked-down shortcut must never interfere with launch.
+            LogFailure("StartMenuShortcut", exception);
+        }
+    }
+
     private static void LogFailure(string stage, Exception exception)
     {
         try

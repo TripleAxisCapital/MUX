@@ -100,7 +100,7 @@ public sealed class StartupService
 
     private static string GetLaunchCommand() => $"\"{GetLaunchExecutable()}\" --background";
 
-    private static string GetLaunchExecutable()
+    internal static string GetLaunchExecutable()
     {
         var runningExe = Environment.ProcessPath
             ?? throw new InvalidOperationException("Unable to locate MUX.exe.");

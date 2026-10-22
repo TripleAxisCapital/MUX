@@ -82,6 +82,7 @@ public partial class App : Application
         InitializeAutoArrangeTrayControls();
         InitializeBlackBarsTrayControls();
         UpdatePredefinedAreasTrayState();
+        RepairStartMenuShortcutSafely();
     }
 
     public bool IsExiting => _isExiting;

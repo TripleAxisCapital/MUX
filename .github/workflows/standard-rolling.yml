@@ -143,6 +143,22 @@ jobs:
           Stop-Process -Id $process.Id -Force
           Write-Host "MUX startup and dedicated Stream Deck command paths passed."
 
+      - name: Verify Windows executable branding
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD "artifacts/MUX/MUX.exe"
+          $sourceIcon = Join-Path $PWD "src/MUX.App/Assets/mux-app.ico"
+          if (-not (Test-Path $sourceIcon) -or -not (Test-Path $exe)) {
+            throw "MUX application or icon is missing from the release inputs."
+          }
+          Add-Type -AssemblyName System.Drawing
+          $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($exe)
+          if ($null -eq $icon -or $icon.Width -lt 16) {
+            throw "MUX.exe does not expose a usable Windows application icon."
+          }
+          $icon.Dispose()
+          Write-Host "MUX.exe contains a usable Windows icon."
+
       - name: Package portable build
         shell: pwsh
         run: Compress-Archive -Path artifacts/MUX/* -DestinationPath artifacts/MUX-win-x64.zip -CompressionLevel Optimal

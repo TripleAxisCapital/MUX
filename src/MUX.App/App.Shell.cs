@@ -82,22 +82,22 @@ public partial class App
         {
             var menu = new Forms.ContextMenuStrip
             {
-                BackColor = Color.FromArgb(28, 28, 31),
-                ForeColor = Color.FromArgb(245, 245, 247),
+                BackColor = Color.FromArgb(22, 22, 22),
+                ForeColor = Color.FromArgb(241, 241, 241),
                 Renderer = new Forms.ToolStripProfessionalRenderer(new MuxTrayColorTable()),
                 Font = new Font("Segoe UI", 9.0f)
             };
 
             var openItem = menu.Items.Add("Open MUX", null, (_, _) => ShowMainWindow());
-            openItem.ForeColor = Color.FromArgb(245, 245, 247);
-            openItem.BackColor = Color.FromArgb(28, 28, 31);
+            openItem.ForeColor = Color.FromArgb(241, 241, 241);
+            openItem.BackColor = Color.FromArgb(22, 22, 22);
             menu.Items.Add(new Forms.ToolStripSeparator());
 
             _predefinedAreasMenuItem = new Forms.ToolStripMenuItem("Predefined window areas")
             {
                 CheckOnClick = false,
-                ForeColor = Color.FromArgb(245, 245, 247),
-                BackColor = Color.FromArgb(28, 28, 31),
+                ForeColor = Color.FromArgb(241, 241, 241),
+                BackColor = Color.FromArgb(22, 22, 22),
                 ToolTipText = "Turn MUX monitor regions on or off without deleting your layouts."
             };
             _predefinedAreasMenuItem.Click += PredefinedAreasMenuItem_Click;
@@ -105,14 +105,14 @@ public partial class App
 
             menu.Items.Add(new Forms.ToolStripSeparator());
             var quitItem = menu.Items.Add("Quit MUX", null, (_, _) => Quit());
-            quitItem.ForeColor = Color.FromArgb(245, 245, 247);
-            quitItem.BackColor = Color.FromArgb(28, 28, 31);
+            quitItem.ForeColor = Color.FromArgb(241, 241, 241);
+            quitItem.BackColor = Color.FromArgb(22, 22, 22);
 
             _muxIcon = LoadMuxIcon();
             _trayIcon = new Forms.NotifyIcon
             {
                 Icon = _muxIcon,
-                Text = "MUX Standard — physical-inch sizing ready",
+                Text = "MUX · Ready",
                 Visible = true,
                 ContextMenuStrip = menu
             };
@@ -165,8 +165,8 @@ public partial class App
         if (_trayIcon is not null)
         {
             _trayIcon.Text = enabled
-                ? "MUX Standard — Areas on · inch sizing"
-                : "MUX Standard — Freeform · inch sizing";
+                ? "MUX · Window areas on"
+                : "MUX · Freeform mode";
         }
     }
 
@@ -246,9 +246,9 @@ public partial class App
             UseSystemColors = false;
         }
 
-        private static readonly Color Background = Color.FromArgb(28, 28, 31);
-        private static readonly Color Raised = Color.FromArgb(44, 44, 49);
-        private static readonly Color Border = Color.FromArgb(58, 58, 64);
+        private static readonly Color Background = Color.FromArgb(22, 22, 22);
+        private static readonly Color Raised = Color.FromArgb(42, 42, 42);
+        private static readonly Color Border = Color.FromArgb(62, 62, 62);
 
         public override Color ToolStripDropDownBackground => Background;
         public override Color ImageMarginGradientBegin => Background;

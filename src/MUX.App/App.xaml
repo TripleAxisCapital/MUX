@@ -3,21 +3,21 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              ShutdownMode="OnExplicitShutdown">
     <Application.Resources>
-        <Color x:Key="BackgroundColor">#080A0D</Color>
-        <Color x:Key="ShellColor">#0A0D11</Color>
-        <Color x:Key="SurfaceColor">#0E1217</Color>
-        <Color x:Key="SurfaceRaisedColor">#121820</Color>
-        <Color x:Key="SurfaceHoverColor">#18202A</Color>
-        <Color x:Key="BorderColor">#202833</Color>
-        <Color x:Key="BorderStrongColor">#2C3744</Color>
-        <Color x:Key="TextColor">#F4F7FA</Color>
-        <Color x:Key="MutedColor">#8C98A5</Color>
-        <Color x:Key="SubtleColor">#5E6975</Color>
-        <Color x:Key="AccentColor">#DCE6F0</Color>
-        <Color x:Key="AccentTextColor">#080A0D</Color>
-        <Color x:Key="SuccessColor">#7FE0AA</Color>
-        <Color x:Key="WarningColor">#E7C47B</Color>
-        <Color x:Key="DangerColor">#FF7D88</Color>
+        <Color x:Key="BackgroundColor">#0A0A0A</Color>
+        <Color x:Key="ShellColor">#101010</Color>
+        <Color x:Key="SurfaceColor">#161616</Color>
+        <Color x:Key="SurfaceRaisedColor">#222222</Color>
+        <Color x:Key="SurfaceHoverColor">#303030</Color>
+        <Color x:Key="BorderColor">#303030</Color>
+        <Color x:Key="BorderStrongColor">#4A4A4A</Color>
+        <Color x:Key="TextColor">#F5F5F5</Color>
+        <Color x:Key="MutedColor">#B1B1B1</Color>
+        <Color x:Key="SubtleColor">#8F8F8F</Color>
+        <Color x:Key="AccentColor">#E9E9E9</Color>
+        <Color x:Key="AccentTextColor">#101010</Color>
+        <Color x:Key="SuccessColor">#DFDFDF</Color>
+        <Color x:Key="WarningColor">#BDBDBD</Color>
+        <Color x:Key="DangerColor">#9A9A9A</Color>
 
         <SolidColorBrush x:Key="BackgroundBrush" Color="{StaticResource BackgroundColor}" />
         <SolidColorBrush x:Key="ShellBrush" Color="{StaticResource ShellColor}" />
@@ -83,7 +83,7 @@
                                 <Setter TargetName="Root" Property="Opacity" Value="0.74" />
                             </Trigger>
                             <Trigger Property="IsKeyboardFocused" Value="True">
-                                <Setter TargetName="Root" Property="BorderBrush" Value="#526273" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="#828282" />
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter TargetName="Root" Property="Opacity" Value="0.38" />
@@ -113,7 +113,7 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="#F3F7FA" />
+                                <Setter TargetName="Root" Property="Background" Value="#F6F6F6" />
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="Root" Property="Opacity" Value="0.78" />
@@ -135,21 +135,21 @@
         </Style>
 
         <Style TargetType="Button" x:Key="MuxHeaderButton" BasedOn="{StaticResource MuxButton}">
-            <Setter Property="Background" Value="#10151B" />
+            <Setter Property="Background" Value="#141414" />
             <Setter Property="Padding" Value="12,7" />
             <Setter Property="FontSize" Value="11" />
         </Style>
 
         <Style TargetType="TextBox" x:Key="MuxTextBox">
-            <Setter Property="Foreground" Value="#D7DEE5" />
-            <Setter Property="Background" Value="#0B0F14" />
+            <Setter Property="Foreground" Value="#DDDDDD" />
+            <Setter Property="Background" Value="#0E0E0E" />
             <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="Padding" Value="11,9" />
             <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI" />
             <Setter Property="FontSize" Value="12" />
             <Setter Property="CaretBrush" Value="{StaticResource TextBrush}" />
-            <Setter Property="SelectionBrush" Value="#45576A" />
+            <Setter Property="SelectionBrush" Value="#545454" />
             <Setter Property="FocusVisualStyle" Value="{x:Null}" />
             <Setter Property="Template">
                 <Setter.Value>
@@ -168,8 +168,8 @@
                                 <Setter TargetName="Field" Property="BorderBrush" Value="{StaticResource BorderStrongBrush}" />
                             </Trigger>
                             <Trigger Property="IsKeyboardFocused" Value="True">
-                                <Setter TargetName="Field" Property="BorderBrush" Value="#526273" />
-                                <Setter TargetName="Field" Property="Background" Value="#0D1218" />
+                                <Setter TargetName="Field" Property="BorderBrush" Value="#828282" />
+                                <Setter TargetName="Field" Property="Background" Value="#111111" />
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter TargetName="Field" Property="Opacity" Value="0.42" />
@@ -181,8 +181,8 @@
         </Style>
 
         <Style TargetType="ComboBoxItem" x:Key="MuxComboBoxItem">
-            <Setter Property="Foreground" Value="#AAB4BE" />
-            <Setter Property="Background" Value="#10151B" />
+            <Setter Property="Foreground" Value="#B2B2B2" />
+            <Setter Property="Background" Value="#141414" />
             <Setter Property="Padding" Value="10,8" />
             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
@@ -203,11 +203,11 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsHighlighted" Value="True">
-                                <Setter TargetName="ItemRoot" Property="Background" Value="#18202A" />
+                                <Setter TargetName="ItemRoot" Property="Background" Value="#1F1F1F" />
                                 <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="ItemRoot" Property="Background" Value="#202A35" />
+                                <Setter TargetName="ItemRoot" Property="Background" Value="#282828" />
                                 <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
@@ -220,8 +220,8 @@
         </Style>
 
         <Style TargetType="ComboBox" x:Key="MuxComboBox">
-            <Setter Property="Foreground" Value="#AAB4BE" />
-            <Setter Property="Background" Value="#0B0F14" />
+            <Setter Property="Foreground" Value="#B2B2B2" />
+            <Setter Property="Background" Value="#0E0E0E" />
             <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="Padding" Value="10,8" />
@@ -263,7 +263,7 @@
                                                                   TextElement.Foreground="{TemplateBinding Foreground}" />
                                                 <Path Grid.Column="1"
                                                       Data="M 0 0 L 4 4 L 8 0"
-                                                      Stroke="#6F7B87"
+                                                      Stroke="#797979"
                                                       StrokeThickness="1.4"
                                                       StrokeStartLineCap="Round"
                                                       StrokeEndLineCap="Round"
@@ -291,8 +291,8 @@
                                 <Border Margin="0,5,0,0"
                                         MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}"
                                         MaxHeight="320"
-                                        Background="#10151B"
-                                        BorderBrush="#29333E"
+                                        Background="#141414"
+                                        BorderBrush="#313131"
                                         BorderThickness="1"
                                         CornerRadius="10"
                                         Padding="5">
@@ -309,15 +309,15 @@
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="DropDownToggle" Property="Background" Value="#0E141A" />
+                                <Setter TargetName="DropDownToggle" Property="Background" Value="#131313" />
                                 <Setter TargetName="DropDownToggle" Property="BorderBrush" Value="{StaticResource BorderStrongBrush}" />
                             </Trigger>
                             <Trigger Property="IsKeyboardFocusWithin" Value="True">
-                                <Setter TargetName="DropDownToggle" Property="BorderBrush" Value="#526273" />
+                                <Setter TargetName="DropDownToggle" Property="BorderBrush" Value="#828282" />
                             </Trigger>
                             <Trigger Property="IsDropDownOpen" Value="True">
-                                <Setter TargetName="DropDownToggle" Property="Background" Value="#10161D" />
-                                <Setter TargetName="DropDownToggle" Property="BorderBrush" Value="#3D4A58" />
+                                <Setter TargetName="DropDownToggle" Property="Background" Value="#151515" />
+                                <Setter TargetName="DropDownToggle" Property="BorderBrush" Value="#484848" />
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter TargetName="Root" Property="Opacity" Value="0.44" />
@@ -329,7 +329,7 @@
         </Style>
 
         <Style TargetType="CheckBox" x:Key="MuxCheckBox">
-            <Setter Property="Foreground" Value="#CDD5DD" />
+            <Setter Property="Foreground" Value="#D4D4D4" />
             <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI" />
             <Setter Property="FontSize" Value="12" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
@@ -347,13 +347,13 @@
                                     Width="16"
                                     Height="16"
                                     CornerRadius="5"
-                                    Background="#0B0F14"
+                                    Background="#0E0E0E"
                                     BorderBrush="{StaticResource BorderStrongBrush}"
                                     BorderThickness="1"
                                     VerticalAlignment="Center">
                                 <Path x:Name="Tick"
                                       Data="M 3 7 L 6 10 L 12 4"
-                                      Stroke="#08100B"
+                                      Stroke="#0D0D0D"
                                       StrokeThickness="1.8"
                                       StrokeStartLineCap="Round"
                                       StrokeEndLineCap="Round"
@@ -367,7 +367,7 @@
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Box" Property="BorderBrush" Value="#566575" />
+                                <Setter TargetName="Box" Property="BorderBrush" Value="#626262" />
                             </Trigger>
                             <Trigger Property="IsChecked" Value="True">
                                 <Setter TargetName="Box" Property="Background" Value="{StaticResource SuccessBrush}" />
@@ -385,7 +385,7 @@
 
         <Style TargetType="ProgressBar" x:Key="MuxProgressBar">
             <Setter Property="Height" Value="2" />
-            <Setter Property="Background" Value="#202833" />
+            <Setter Property="Background" Value="#272727" />
             <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
             <Setter Property="BorderThickness" Value="0" />
         </Style>

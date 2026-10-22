@@ -1,11 +1,11 @@
-<Window x:Class="MUX.App.Windows.AddMonitorWindow"
+<Window Icon="pack://application:,,,/Assets/mux-logo.png" x:Class="MUX.App.Windows.AddMonitorWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Add monitor" Width="438" Height="458"
         WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
         WindowStyle="None" AllowsTransparency="True" Background="Transparent">
-    <Border Background="#F7080B0F"
-            BorderBrush="#27323D"
+    <Border Background="#F70B0B0B"
+            BorderBrush="#303030"
             BorderThickness="1"
             CornerRadius="18"
             Padding="26">

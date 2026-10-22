@@ -37,6 +37,16 @@ public partial class MainWindow : Window
     {
         _loading = true;
         _state = await _store.LoadAsync();
+        try
+        {
+            _state.LaunchAtStartup = _startupService.Reconcile(_state.LaunchAtStartup);
+        }
+        catch (Exception)
+        {
+            // Windows policy and registry errors must not block the main application.
+            _state.LaunchAtStartup = SafeStartupEnabled();
+        }
+
         MergeDetectedDisplays();
         SelectInitialDisplay();
         RefreshAll();
@@ -151,7 +161,8 @@ public partial class MainWindow : Window
         WorkspaceCanvas.SetModel(_display, _layout);
 
         SnapCheck.IsChecked = _state.SnapOnDrag;
-        StartupCheck.IsChecked = _state.LaunchAtStartup || SafeStartupEnabled();
+        StartupCheck.IsChecked = SafeStartupEnabled();
+        StartupCheck.ToolTip = "Start MUX in the system tray when signing in to Windows.";
         RefreshEngineVisual();
         RefreshZoneInspector(null);
     }
@@ -522,12 +533,14 @@ public partial class MainWindow : Window
         try
         {
             _startupService.SetEnabled(enabled);
-            _state.LaunchAtStartup = enabled;
+            _state.LaunchAtStartup = _startupService.IsEnabled();
+            StartupCheck.IsChecked = _state.LaunchAtStartup;
         }
         catch (Exception ex)
         {
-            StartupCheck.IsChecked = !enabled;
-            MessageBox.Show(this, ex.Message, "Unable to change startup setting", MessageBoxButton.OK, MessageBoxImage.Information);
+            StartupCheck.IsChecked = SafeStartupEnabled();
+            _state.LaunchAtStartup = StartupCheck.IsChecked == true;
+            MessageBox.Show(this, ex.Message, "Unable to change startup setting", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         await SaveStateAsync();
     }

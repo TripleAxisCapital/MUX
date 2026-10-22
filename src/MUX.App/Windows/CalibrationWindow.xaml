@@ -1,8 +1,8 @@
-<Window x:Class="MUX.App.Windows.CalibrationWindow"
+<Window Icon="pack://application:,,,/Assets/mux-logo.png" x:Class="MUX.App.Windows.CalibrationWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         WindowStyle="None" ResizeMode="NoResize"
-        Background="#F5080A0D"
+        Background="#F50A0A0A"
         ShowInTaskbar="False" Topmost="True">
     <Grid x:Name="RootGrid">
         <Grid.RowDefinitions>
@@ -99,7 +99,7 @@
 
         <TextBlock Grid.Row="3"
                    Text="Esc to cancel"
-                   Foreground="#4D5863"
+                   Foreground="#565656"
                    FontSize="10"
                    HorizontalAlignment="Center"
                    VerticalAlignment="Bottom"

@@ -127,49 +127,49 @@ public partial class MainWindow
         {
             case "checking":
                 UpdateStatusText.Text = "Checking";
-                UpdateStatusDot.Fill = BrushFrom(116, 166, 207);
+                UpdateStatusDot.Fill = BrushFrom(175, 175, 175);
                 UpdateButton.Content = "Checking";
                 UpdateButton.IsEnabled = false;
                 break;
 
             case "available":
                 UpdateStatusText.Text = "Update ready";
-                UpdateStatusDot.Fill = BrushFrom(231, 196, 123);
+                UpdateStatusDot.Fill = BrushFrom(205, 205, 205);
                 UpdateButton.Content = "Install";
                 UpdateButton.IsEnabled = true;
                 break;
 
             case "downloading":
                 UpdateStatusText.Text = "Downloading";
-                UpdateStatusDot.Fill = BrushFrom(116, 166, 207);
+                UpdateStatusDot.Fill = BrushFrom(175, 175, 175);
                 UpdateButton.Content = "Updating";
                 UpdateButton.IsEnabled = false;
                 break;
 
             case "installing":
                 UpdateStatusText.Text = "Restarting";
-                UpdateStatusDot.Fill = BrushFrom(127, 224, 170);
+                UpdateStatusDot.Fill = BrushFrom(230, 230, 230);
                 UpdateButton.Content = "Applying";
                 UpdateButton.IsEnabled = false;
                 break;
 
             case "current":
                 UpdateStatusText.Text = "Up to date";
-                UpdateStatusDot.Fill = BrushFrom(127, 224, 170);
+                UpdateStatusDot.Fill = BrushFrom(230, 230, 230);
                 UpdateButton.Content = "Check";
                 UpdateButton.IsEnabled = true;
                 break;
 
             case "setup_required":
                 UpdateStatusText.Text = "Setup required";
-                UpdateStatusDot.Fill = BrushFrom(231, 196, 123);
+                UpdateStatusDot.Fill = BrushFrom(205, 205, 205);
                 UpdateButton.Content = "Migrate";
                 UpdateButton.IsEnabled = true;
                 break;
 
             default:
                 UpdateStatusText.Text = "Update unavailable";
-                UpdateStatusDot.Fill = BrushFrom(255, 125, 136);
+                UpdateStatusDot.Fill = BrushFrom(140, 140, 140);
                 UpdateButton.Content = "Retry";
                 UpdateButton.IsEnabled = true;
                 break;

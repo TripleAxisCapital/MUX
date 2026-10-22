@@ -346,8 +346,12 @@ public sealed class WindowManagerService : IDisposable
         }
 
         var hovered = DisplayGeometry.FindZoneAtPoint(_display, _layout, mouse.X, mouse.Y);
-        _dragHoveredZone = hovered?.Id;
-        _dragPreview.Render(_display, _layout, _dragHoveredZone, _dragHighlightColor, _outlineThickness);
+        var nextHoverId = hovered?.Id;
+        if (!_dragPreview.IsVisible || _dragHoveredZone != nextHoverId)
+        {
+            _dragHoveredZone = nextHoverId;
+            _dragPreview.Render(_display, _layout, _dragHoveredZone, _dragHighlightColor, _outlineThickness);
+        }
     }
 
     private void EndDragPreview()

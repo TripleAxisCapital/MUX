@@ -23,10 +23,12 @@ internal sealed class ZoneDragPreviewService : IDisposable
     private static readonly IntPtr HwndTopmost = new(-1);
     private readonly Dictionary<Guid, (Window Window, Border Border)> _targets = new();
     private bool _disposed;
+    public bool IsVisible { get; private set; }
 
     public void Render(DisplayProfile display, LayoutProfile layout, Guid? hovered, string highlightColor, double thickness)
     {
         if (_disposed) return;
+        IsVisible = true;
         var chosen = ParseColor(highlightColor);
         var active = layout.Zones.Select(z => z.Id).ToHashSet();
         foreach (var id in _targets.Keys.Where(id => !active.Contains(id)).ToArray())
@@ -62,6 +64,7 @@ internal sealed class ZoneDragPreviewService : IDisposable
 
     public void Hide()
     {
+        IsVisible = false;
         foreach (var target in _targets.Values)
         {
             if (target.Window.IsVisible) target.Window.Hide();
@@ -138,5 +141,5 @@ internal sealed class ZoneDragPreviewService : IDisposable
         => IntPtr.Size == 8 ? GetWindowLongPtr64(hwnd, index) : new IntPtr(GetWindowLong32(hwnd, index));
 
     private static IntPtr SetWindowLongPtr(IntPtr hwnd, int index, IntPtr value)
-        => IntPtr.Size == 8 ? SetWindowLongPtr64(hwnd, index, value) : new IntPtr(SetWindowLong32(hwnd, index, value));
+        => IntPtr.Size == 8 ? SetWindowLongPtr64(hwnd, index, value) : new IntPtr(SetWindowLong32(hwnd, index, value.ToInt32()));
 }

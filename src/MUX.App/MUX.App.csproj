@@ -36,7 +36,7 @@
   <Target Name="GenerateMuxNativeIcon"
           BeforeTargets="AssignTargetPaths;ResolveApplicationIcon;CoreCompile"
           Condition="'$(OS)' == 'Windows_NT'">
-    <Exec Command="powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\..\scripts\generate-mux-icon.ps1&quot; -SourcePath &quot;$(MSBuildProjectDirectory)\Assets\mux-logo.png&quot; -OutputPath &quot;$(MSBuildProjectDirectory)\Assets\mux-app.ico&quot;" />
+    <Exec Command="powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\..\scripts\generate-mux-icon.ps1&quot; -SourcePath &quot;$(MSBuildProjectDirectory)\..\..\docs\assets\mux-logo.svg&quot; -OutputPath &quot;$(MSBuildProjectDirectory)\Assets\mux-app.ico&quot;" />
   </Target>
 
   <!-- Every published Standard package gets genuine NativeAOT Stream Deck helpers. -->

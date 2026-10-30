@@ -4,6 +4,7 @@
         xmlns:controls="clr-namespace:MUX.App.Controls;assembly=MUX"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         Title="MUX Virtual Displays"
+        Icon="pack://application:,,,/Assets/mux-logo.png"
         Width="1320" Height="820" MinWidth="1120" MinHeight="700"
         Background="{StaticResource BackgroundBrush}"
         Foreground="{StaticResource TextBrush}"

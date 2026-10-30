@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using MUX.Virtual.App.Models;
 using MUX.Virtual.App.Services;
 
@@ -5,6 +6,11 @@ namespace MUX.Virtual.App;
 
 public partial class App : Application
 {
+    private System.Drawing.Icon? _smallWindowIcon;
+    private System.Drawing.Icon? _largeWindowIcon;
+
+    private static readonly Uri NativeIconUri = new("pack://application:,,,/Assets/mux-app.ico");
+
     private static readonly string LogRoot = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "MUX",
@@ -40,6 +46,7 @@ public partial class App : Application
 
             WriteStartupLog("Creating main window.");
             var window = new MainWindow();
+            window.SourceInitialized += (_, _) => ApplyNativeWindowIcons(window);
             MainWindow = window;
             window.Show();
             window.Activate();
@@ -52,6 +59,46 @@ public partial class App : Application
             Shutdown(-1);
         }
     }
+
+    private void ApplyNativeWindowIcons(Window window)
+    {
+        try
+        {
+            var hwnd = new System.Windows.Interop.WindowInteropHelper(window).Handle;
+            if (hwnd == IntPtr.Zero)
+            {
+                return;
+            }
+
+            _smallWindowIcon ??= LoadWindowIcon(16);
+            _largeWindowIcon ??= LoadWindowIcon(32);
+            SendMessage(hwnd, 0x0080, IntPtr.Zero, _smallWindowIcon.Handle);
+            SendMessage(hwnd, 0x0080, new IntPtr(1), _largeWindowIcon.Handle);
+        }
+        catch (Exception exception)
+        {
+            LogException("Native taskbar icon", exception);
+        }
+    }
+
+    private static System.Drawing.Icon LoadWindowIcon(int pixels)
+    {
+        var resource = Application.GetResourceStream(NativeIconUri)
+            ?? throw new InvalidOperationException("The native MUX Virtual Displays icon resource was not found.");
+        using var stream = resource.Stream;
+        using var icon = new System.Drawing.Icon(stream, new System.Drawing.Size(pixels, pixels));
+        return (System.Drawing.Icon)icon.Clone();
+    }
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        _smallWindowIcon?.Dispose();
+        _largeWindowIcon?.Dispose();
+        base.OnExit(e);
+    }
+
+    [DllImport("user32.dll", EntryPoint = "SendMessageW")]
+    private static extern IntPtr SendMessage(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
 
     private static async Task<int> RunDeviceSmokeAsync()
     {

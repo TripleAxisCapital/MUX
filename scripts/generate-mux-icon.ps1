@@ -55,8 +55,8 @@ try {
                 $writer.Write([int]40)          # BITMAPINFOHEADER size
                 $writer.Write([int]$size)       # width
                 $writer.Write([int]($size * 2)) # XOR + AND mask height
-                $writer.Write([short]1)         # color planes
-                $writer.Write([short]32)        # BGRA bits per pixel
+                $writer.Write([System.Int16]1)         # color planes
+                $writer.Write([System.Int16]32)        # BGRA bits per pixel
                 $writer.Write([int]0)           # BI_RGB
                 $writer.Write([int]($size * $size * 4))
                 $writer.Write([int]0)           # x pixels/meter
@@ -104,9 +104,9 @@ try {
     $stream = [System.IO.File]::Create($temp)
     $iconWriter = [System.IO.BinaryWriter]::new($stream)
     try {
-        $iconWriter.Write([ushort]0)
-        $iconWriter.Write([ushort]1)
-        $iconWriter.Write([ushort]$frames.Count)
+        $iconWriter.Write([System.UInt16]0)
+        $iconWriter.Write([System.UInt16]1)
+        $iconWriter.Write([System.UInt16]$frames.Count)
         $offset = 6 + $frames.Count * 16
         foreach ($frame in $frames) {
             $widthByte = if ($frame.Size -eq 256) { 0 } else { $frame.Size }
@@ -114,10 +114,10 @@ try {
             $iconWriter.Write([byte]$widthByte)
             $iconWriter.Write([byte]0)
             $iconWriter.Write([byte]0)
-            $iconWriter.Write([ushort]1)
-            $iconWriter.Write([ushort]32)
-            $iconWriter.Write([uint32]$frame.Bytes.Length)
-            $iconWriter.Write([uint32]$offset)
+            $iconWriter.Write([System.UInt16]1)
+            $iconWriter.Write([System.UInt16]32)
+            $iconWriter.Write([System.UInt32]$frame.Bytes.Length)
+            $iconWriter.Write([System.UInt32]$offset)
             $offset += $frame.Bytes.Length
         }
         foreach ($frame in $frames) {

@@ -22,6 +22,10 @@ public partial class MainWindow : Window
     private DisplayProfile? _display;
     private LayoutProfile? _layout;
     private bool _loading;
+    private bool _initialWorkspaceLoadStarted;
+
+    internal bool StartHiddenOnInitialLoad { get; set; }
+    internal event EventHandler? WorkspaceReady;
 
     public MainWindow()
     {
@@ -35,6 +39,19 @@ public partial class MainWindow : Window
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
+        if (_initialWorkspaceLoadStarted)
+        {
+            return;
+        }
+
+        _initialWorkspaceLoadStarted = true;
+        if (StartHiddenOnInitialLoad)
+        {
+            StartHiddenOnInitialLoad = false;
+            Hide();
+            Opacity = 1;
+        }
+
         _loading = true;
         _state = await _store.LoadAsync();
         // Older installs kept outlines visible and required Shift by default.
@@ -64,11 +81,7 @@ public partial class MainWindow : Window
         _loading = false;
         ConfigureWindowManager();
         if (migrateDragMode) await SaveStateAsync();
-
-        if (Environment.GetCommandLineArgs().Any(a => a.Equals("--background", StringComparison.OrdinalIgnoreCase)))
-        {
-            Hide();
-        }
+        WorkspaceReady?.Invoke(this, EventArgs.Empty);
     }
 
     private void MainWindow_SourceInitialized(object? sender, EventArgs e)

@@ -11,7 +11,7 @@ namespace MUX.App;
 
 public partial class App : Application
 {
-    private static readonly Uri MuxLogoUri = new("pack://application:,,,/Assets/mux-logo.png", UriKind.Absolute);
+    private static readonly Uri MuxIconUri = new("pack://application:,,,/Assets/mux-app.ico", UriKind.Absolute);
 
     private Forms.NotifyIcon? _trayIcon;
     private Forms.ToolStripMenuItem? _predefinedAreasMenuItem;
@@ -51,7 +51,15 @@ public partial class App : Application
         base.OnStartup(e);
         RetireStaleStandardInstances();
 
-        _mainWindow = new MainWindow();
+        var launchInBackground = e.Args.Any(arg => arg.Equals("--background", StringComparison.OrdinalIgnoreCase));
+        _mainWindow = new MainWindow
+        {
+            // Hide before WPF first paints, rather than showing an empty window while
+            // asynchronous workspace restoration is still in progress.
+            StartHiddenOnInitialLoad = launchInBackground,
+            Opacity = launchInBackground ? 0 : 1,
+            ShowActivated = !launchInBackground
+        };
         ApplyWindowIconSafely(_mainWindow);
         MainWindow = _mainWindow;
 
@@ -63,7 +71,33 @@ public partial class App : Application
         // sure the black-bars bridge is actually attached. Stream Deck itself uses the more robust
         // LocalAppData command inbox below and therefore does not depend on a visible HWND.
         _mainWindow.InitializeBlackBarsCommandBridge();
-        _mainWindow.InitializeScreenEdgeBars();
+
+        // Initialize display overlays only after the saved workspace and monitor
+        // topology have loaded. On sign-in, let the Windows desktop settle first.
+        _mainWindow.WorkspaceReady += async (_, _) =>
+        {
+            UpdatePredefinedAreasTrayState();
+            UpdateAutoArrangeTrayState();
+            if (launchInBackground)
+            {
+                await Task.Delay(1200);
+            }
+
+            if (_isExiting || _mainWindow is null)
+            {
+                return;
+            }
+
+            try
+            {
+                _mainWindow.InitializeScreenEdgeBars();
+                InitializeBlackBarsTrayControls();
+            }
+            catch (Exception exception)
+            {
+                LogFailure("WorkspaceReady", exception);
+            }
+        };
 
         _updateService = new MuxUpdateService();
         _mainWindow.InitializeUpdates(_updateService);
@@ -76,13 +110,13 @@ public partial class App : Application
         _streamDeckCommandInbox.Start();
 
         _mainWindow.PredefinedAreasEnabledChanged += MainWindow_PredefinedAreasEnabledChanged;
-        _mainWindow.Show();
 
+        // Install the tray icon before any WPF window is shown: it must always be
+        // available to reopen a background launch, even during slow sign-in.
         InitializeTrayIconSafely();
         InitializeAutoArrangeTrayControls();
-        InitializeBlackBarsTrayControls();
-        UpdatePredefinedAreasTrayState();
         RepairStartMenuShortcutSafely();
+        _mainWindow.Show();
     }
 
     public bool IsExiting => _isExiting;

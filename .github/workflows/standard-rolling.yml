@@ -92,6 +92,12 @@ jobs:
             throw "MUX Standard exited during startup with exit code $($process.ExitCode)."
           }
 
+          # --background should never leave a visible main application window.
+          # Process.MainWindowHandle excludes hidden windows and tray/tool windows.
+          if ($process.MainWindowHandle -ne [IntPtr]::Zero) {
+            throw "MUX --background opened a visible application window."
+          }
+
           function Test-Launcher([string]$path, [string]$name, [int[]]$allowedExitCodes) {
             $child = Start-Process -FilePath $path -PassThru
             if (-not $child.WaitForExit(16000)) {

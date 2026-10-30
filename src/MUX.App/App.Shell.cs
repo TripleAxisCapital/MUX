@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Drawing;
-using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Media.Imaging;
 using MUX.App.Services;
@@ -67,7 +66,7 @@ public partial class App
     {
         try
         {
-            window.Icon = BitmapFrame.Create(MuxLogoUri);
+            window.Icon = BitmapFrame.Create(MuxIconUri);
         }
         catch (Exception exception)
         {
@@ -174,23 +173,14 @@ public partial class App
     {
         try
         {
-            var resource = Application.GetResourceStream(MuxLogoUri);
+            var resource = Application.GetResourceStream(MuxIconUri);
             if (resource is not null)
             {
                 using var stream = resource.Stream;
-                using var source = new Bitmap(stream);
-                using var scaled = new Bitmap(source, new System.Drawing.Size(64, 64));
-                var handle = scaled.GetHicon();
-
-                try
-                {
-                    using var temporary = Icon.FromHandle(handle);
-                    return (Icon)temporary.Clone();
-                }
-                finally
-                {
-                    DestroyIcon(handle);
-                }
+                using var embeddedIcon = new Icon(stream);
+                // Clone before releasing the WPF resource stream. Use the actual
+                // multi-resolution ICO instead of GDI+ PNG -> HICON conversion.
+                return (Icon)embeddedIcon.Clone();
             }
         }
         catch (Exception exception)
@@ -287,7 +277,4 @@ public partial class App
         public override Color CheckPressedBackground => Raised;
     }
 
-    [DllImport("user32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool DestroyIcon(IntPtr hIcon);
 }

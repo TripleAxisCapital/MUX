@@ -12,7 +12,6 @@ public partial class MainWindow
     private CheckBox? _outlineCheck;
     private ComboBox? _outlineThicknessBox;
     private ComboBox? _snapModeBox;
-    private FullscreenWindowService? _fullscreenWindowService;
 
     public void InitializePhantomWindows()
     {
@@ -28,19 +27,10 @@ public partial class MainWindow
         ZoneOutlineService.LayoutEdited -= ZoneOutlineService_LayoutEdited;
         ZoneOutlineService.LayoutEdited += ZoneOutlineService_LayoutEdited;
 
-        _fullscreenWindowService = new FullscreenWindowService(
-            () => _display,
-            () => _layout,
-            () => _state.Enabled);
-
-        Closed += (_, _) =>
-        {
-            ZoneOutlineService.LayoutEdited -= ZoneOutlineService_LayoutEdited;
-            _fullscreenWindowService?.Dispose();
-            _fullscreenWindowService = null;
-        };
-
-        Loaded += PhantomWindows_Loaded;
+        // Native Windows maximize and browser F11 must cover the physical monitor.
+        // Explicit MUX fullscreen commands remain available through their own service.
+        Closed += (_, _) => ZoneOutlineService.LayoutEdited -= ZoneOutlineService_LayoutEdited;
+        WorkspaceReady += PhantomWindows_Loaded;
     }
 
     private static void InstallLegibleFieldStyles()
@@ -169,7 +159,7 @@ public partial class MainWindow
         box.Items.Add(item);
     }
 
-    private void PhantomWindows_Loaded(object sender, RoutedEventArgs e)
+    private void PhantomWindows_Loaded(object? sender, EventArgs e)
     {
         _phantomLoading = true;
         try

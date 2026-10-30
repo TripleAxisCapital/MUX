@@ -290,7 +290,10 @@ public sealed class WindowManagerService : IDisposable
 
         if ((eventType == EventObjectStateChange || eventType == EventObjectLocationChange || eventType == EventSystemForeground) && IsZoomed(hwnd))
         {
-            HandleNativeMaximize(hwnd);
+            // A native maximize request belongs to Windows, not a MUX quadrant.
+            // Cancel any pending drag-snap correction so it cannot undo the user's
+            // maximize, while leaving explicit zone commands available.
+            _pseudoMaximized.TryRemove(hwnd, out _);
             return;
         }
 
@@ -366,64 +369,6 @@ public sealed class WindowManagerService : IDisposable
         _dragHoveredZone = null;
     }
 
-    private void HandleNativeMaximize(IntPtr hwnd)
-    {
-        if (_display is null || _layout is null)
-        {
-            return;
-        }
-
-        if (_pseudoMaximized.TryRemove(hwnd, out var previousRestoreRect))
-        {
-            Suppress(hwnd, () =>
-            {
-                ShowWindow(hwnd, SwRestore);
-                SetWindowRect(hwnd, previousRestoreRect);
-            });
-            TrackNormalWindow(hwnd, previousRestoreRect);
-            return;
-        }
-
-        var normal = GetBestRestoreRect(hwnd);
-        if (normal is null)
-        {
-            return;
-        }
-
-        var zone = ResolveAssignedZone(hwnd, normal.Value);
-        if (zone is null)
-        {
-            return;
-        }
-
-        _lastNormalRects[hwnd] = normal.Value;
-        _windowZones[hwnd] = zone.Id;
-        _pseudoMaximized[hwnd] = normal.Value;
-        ApplyNativeZoneMaximize(hwnd, zone);
-    }
-
-    private PixelRect? GetBestRestoreRect(IntPtr hwnd)
-    {
-        if (_lastNormalRects.TryGetValue(hwnd, out var cached) && cached.Width > 0 && cached.Height > 0)
-        {
-            return cached;
-        }
-
-        var placement = new WindowPlacement { Length = Marshal.SizeOf<WindowPlacement>() };
-        if (!GetWindowPlacement(hwnd, ref placement))
-        {
-            return null;
-        }
-
-        var normal = new PixelRect(
-            placement.NormalPosition.Left,
-            placement.NormalPosition.Top,
-            placement.NormalPosition.Right - placement.NormalPosition.Left,
-            placement.NormalPosition.Bottom - placement.NormalPosition.Top);
-
-        return normal.Width > 0 && normal.Height > 0 ? normal : null;
-    }
-
     private VirtualMonitorZone? ResolveAssignedZone(IntPtr hwnd, PixelRect fallbackRect)
     {
         if (_layout is null || _display is null)
@@ -470,17 +415,6 @@ public sealed class WindowManagerService : IDisposable
         {
             _windowZones[hwnd] = zone.Id;
         }
-    }
-
-    private void ApplyNativeZoneMaximize(IntPtr hwnd, VirtualMonitorZone zone)
-    {
-        Suppress(hwnd, () =>
-        {
-            ShowWindow(hwnd, SwRestore);
-            FitWindowToZone(hwnd, zone);
-        });
-
-        ScheduleNativeMaximizeCorrection(hwnd, zone.Id);
     }
 
     private void ScheduleNativeMaximizeCorrection(IntPtr hwnd, Guid zoneId)
@@ -692,10 +626,6 @@ public sealed class WindowManagerService : IDisposable
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool GetWindowPlacement(IntPtr hwnd, ref WindowPlacement lpwndpl);
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool ShowWindow(IntPtr hwnd, int nCmdShow);
 
     [DllImport("user32.dll")]
@@ -731,17 +661,6 @@ public sealed class WindowManagerService : IDisposable
         public int Top;
         public int Right;
         public int Bottom;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct WindowPlacement
-    {
-        public int Length;
-        public int Flags;
-        public int ShowCmd;
-        public Point MinPosition;
-        public Point MaxPosition;
-        public Rect NormalPosition;
     }
 
     [StructLayout(LayoutKind.Sequential)]

@@ -29,6 +29,10 @@ public partial class MainWindow
         Loaded += MainWindow_ScreenBarsLoaded;
         Activated += MainWindow_ScreenBarsActivated;
         Closed += MainWindow_ScreenBarsClosed;
+        if (IsLoaded)
+        {
+            MainWindow_ScreenBarsLoaded(this, new RoutedEventArgs());
+        }
     }
 
     public bool ToggleScreenEdgeBars()

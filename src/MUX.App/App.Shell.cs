@@ -66,7 +66,9 @@ public partial class App
     {
         try
         {
-            window.Icon = BitmapFrame.Create(MuxIconUri);
+            // WPF's bitmap decoder does not support every valid Win32 ICO image.
+            // The bundled PNG is WPF-safe; the tray uses the native Windows icon.
+            window.Icon = BitmapFrame.Create(MuxLogoUri);
         }
         catch (Exception exception)
         {

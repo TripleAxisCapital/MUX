@@ -11,6 +11,7 @@ namespace MUX.App;
 
 public partial class App : Application
 {
+    private static readonly Uri MuxLogoUri = new("pack://application:,,,/Assets/mux-logo.png", UriKind.Absolute);
     private static readonly Uri MuxIconUri = new("pack://application:,,,/Assets/mux-app.ico", UriKind.Absolute);
 
     private Forms.NotifyIcon? _trayIcon;

@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:controls="clr-namespace:MUX.App.Controls"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
-        Title="MUX" Icon="pack://application:,,,/Assets/mux-app.ico" Width="1190" Height="760" MinWidth="1040" MinHeight="680"
+        Title="MUX" Icon="pack://application:,,,/Assets/mux-logo.png" Width="1190" Height="760" MinWidth="1040" MinHeight="680"
         Background="{StaticResource BackgroundBrush}" WindowStyle="None" ResizeMode="CanResize"
         FontFamily="Segoe UI Variable Text, Segoe UI">
     <shell:WindowChrome.WindowChrome>

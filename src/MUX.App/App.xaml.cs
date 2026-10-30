@@ -53,14 +53,7 @@ public partial class App : Application
         RetireStaleStandardInstances();
 
         var launchInBackground = e.Args.Any(arg => arg.Equals("--background", StringComparison.OrdinalIgnoreCase));
-        _mainWindow = new MainWindow
-        {
-            // Hide before WPF first paints, rather than showing an empty window while
-            // asynchronous workspace restoration is still in progress.
-            StartHiddenOnInitialLoad = launchInBackground,
-            Opacity = launchInBackground ? 0 : 1,
-            ShowActivated = !launchInBackground
-        };
+        _mainWindow = new MainWindow();
         ApplyWindowIconSafely(_mainWindow);
         MainWindow = _mainWindow;
 
@@ -117,7 +110,18 @@ public partial class App : Application
         InitializeTrayIconSafely();
         InitializeAutoArrangeTrayControls();
         RepairStartMenuShortcutSafely();
-        _mainWindow.Show();
+        if (launchInBackground)
+        {
+            // Create only the native, initially hidden HWND: hotkeys and legacy
+            // command bridges need a message target, not a visible WPF window.
+            // Never call Show() at sign-in; the tray command opens the window.
+            new System.Windows.Interop.WindowInteropHelper(_mainWindow).EnsureHandle();
+            _mainWindow.BeginBackgroundInitialization();
+        }
+        else
+        {
+            _mainWindow.Show();
+        }
     }
 
     public bool IsExiting => _isExiting;

@@ -7,6 +7,7 @@ public partial class MainWindow
 {
     private BlackBarsCommandBridge? _blackBarsCommandBridge;
     private bool _blackBarsStartupTogglePending;
+    private bool _blackBarsCallbacksInstalled;
 
     public bool ToggleAllBlackBars()
         => EnhancedEdgeCoverService.Shared.ToggleAllVisibility();
@@ -21,8 +22,12 @@ public partial class MainWindow
         _blackBarsCommandBridge = BlackBarsCommandBridge.Attach(this, QueueBlackBarsToggleCommand);
         _blackBarsStartupTogglePending |= BlackBarsCommandBootstrap.ConsumeStartupRequest();
 
-        Loaded += MainWindow_BlackBarsLoaded;
-        Closed += MainWindow_BlackBarsClosed;
+        if (!_blackBarsCallbacksInstalled)
+        {
+            _blackBarsCallbacksInstalled = true;
+            WorkspaceReady += MainWindow_BlackBarsReady;
+            Closed += MainWindow_BlackBarsClosed;
+        }
     }
 
     private void QueueBlackBarsToggleCommand()
@@ -36,7 +41,7 @@ public partial class MainWindow
         _ = ToggleAllBlackBars();
     }
 
-    private void MainWindow_BlackBarsLoaded(object sender, RoutedEventArgs e)
+    private void MainWindow_BlackBarsReady(object? sender, EventArgs e)
     {
         if (!_blackBarsStartupTogglePending)
         {
@@ -49,7 +54,7 @@ public partial class MainWindow
 
     private void MainWindow_BlackBarsClosed(object? sender, EventArgs e)
     {
-        Loaded -= MainWindow_BlackBarsLoaded;
+        WorkspaceReady -= MainWindow_BlackBarsReady;
         Closed -= MainWindow_BlackBarsClosed;
         _blackBarsCommandBridge?.Dispose();
         _blackBarsCommandBridge = null;

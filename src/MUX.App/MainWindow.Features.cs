@@ -36,13 +36,13 @@ public partial class MainWindow
             _muxFullscreenService = null;
         };
 
-        Loaded += FeatureControls_Loaded;
+        WorkspaceReady += FeatureControls_Ready;
     }
 
-    private async void FeatureControls_Loaded(object sender, RoutedEventArgs e)
+    private void FeatureControls_Ready(object? sender, EventArgs e)
     {
-        var persisted = await new StateStore().LoadAsync();
-        _state.Shortcuts = persisted.Shortcuts ?? new ShortcutSettings();
+        // The workspace is loaded once, before registering the persisted shortcuts.
+        _state.Shortcuts ??= new ShortcutSettings();
 
         if (_hotkeys is not null)
         {

@@ -32,7 +32,7 @@ public partial class MainWindow
 
         EngineToggleButton.ToolTip = "Turn predefined MUX window areas on or off. Exact freeform resizing stays available.";
         EngineToggleButton.Click += EngineToggleButton_FreeformStateChanged;
-        Loaded += MainWindow_FreeformLoaded;
+        WorkspaceReady += MainWindow_FreeformReady;
         Closed += MainWindow_FreeformClosed;
 
         // Freeform snapping and linked-window management must remain alive even when
@@ -222,15 +222,9 @@ public partial class MainWindow
         await SaveStateAsync();
     }
 
-    private async void MainWindow_FreeformLoaded(object sender, RoutedEventArgs e)
+    private void MainWindow_FreeformReady(object? sender, EventArgs e)
     {
-        // MainWindow_Loaded is async and is registered first. Wait for that state/discovery pass to
-        // finish before populating monitor choices instead of racing it and rendering an empty list.
-        for (var attempt = 0; attempt < 100 && _loading; attempt++)
-        {
-            await Task.Delay(40);
-        }
-
+        // Display settings are now fully restored, whether MUX starts visible or hidden.
         SyncPredefinedAreasUi();
         RefreshCaptionPillDisplayUi();
         StartCaptionPillDisplayRefreshTimer();

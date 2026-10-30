@@ -24,7 +24,6 @@ public partial class MainWindow : Window
     private bool _loading;
     private bool _initialWorkspaceLoadStarted;
 
-    internal bool StartHiddenOnInitialLoad { get; set; }
     internal event EventHandler? WorkspaceReady;
 
     public MainWindow()
@@ -38,6 +37,14 @@ public partial class MainWindow : Window
     }
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
+        => await InitializeWorkspaceAsync();
+
+    // Windows sign-in creates an invisible HWND for hooks, but never displays the
+    // control window. Load the exact same persisted workspace without WPF Loaded.
+    internal async void BeginBackgroundInitialization()
+        => await InitializeWorkspaceAsync();
+
+    private async Task InitializeWorkspaceAsync()
     {
         if (_initialWorkspaceLoadStarted)
         {
@@ -45,13 +52,6 @@ public partial class MainWindow : Window
         }
 
         _initialWorkspaceLoadStarted = true;
-        if (StartHiddenOnInitialLoad)
-        {
-            StartHiddenOnInitialLoad = false;
-            Hide();
-            Opacity = 1;
-        }
-
         _loading = true;
         _state = await _store.LoadAsync();
         // Older installs kept outlines visible and required Shift by default.

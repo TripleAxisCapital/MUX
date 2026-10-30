@@ -17,7 +17,7 @@ public partial class MainWindow
     private TextBlock? _autoArrangeStatusText;
     private DispatcherTimer? _autoArrangeStartupTimer;
     private AutoArrangeCommandBridge? _autoArrangeCommandBridge;
-    private bool _autoArrangeLoadedSeen;
+    private bool _autoArrangeWorkspaceReady;
     private bool _autoArrangeReady;
     private bool _autoArrangeCommandPending;
 
@@ -44,7 +44,7 @@ public partial class MainWindow
         _autoArrangeControlsInstalled = true;
         InstallAutoArrangeControls();
         _autoArrangeCommandPending |= AutoArrangeCommandBootstrap.ConsumeStartupRequest();
-        Loaded += MainWindow_AutoArrangeLoaded;
+        WorkspaceReady += MainWindow_AutoArrangeReady;
         ContentRendered += MainWindow_AutoArrangeContentRendered;
         Closed += MainWindow_AutoArrangeClosed;
     }
@@ -174,9 +174,9 @@ public partial class MainWindow
         RefreshAutoArrangeSizeUi();
     }
 
-    private void MainWindow_AutoArrangeLoaded(object sender, RoutedEventArgs e)
+    private void MainWindow_AutoArrangeReady(object? sender, EventArgs e)
     {
-        _autoArrangeLoadedSeen = true;
+        _autoArrangeWorkspaceReady = true;
 
         if (_hotkeys is not null)
         {
@@ -228,9 +228,9 @@ public partial class MainWindow
 
     private void AutoArrangeStartupTimer_Tick(object? sender, EventArgs e)
     {
-        // MainWindow_Loaded sets _loading before its first await. Requiring that Loaded has actually
-        // run as well prevents an early CLI command from racing ahead of state/display discovery.
-        if (!_autoArrangeLoadedSeen || _loading)
+        // Wait for workspace restoration, not a visible WPF Loaded event: sign-in
+        // never shows the main window until the user requests it from the tray.
+        if (!_autoArrangeWorkspaceReady || _loading)
         {
             return;
         }

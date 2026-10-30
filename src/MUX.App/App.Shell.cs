@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Drawing;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Media.Imaging;
 using MUX.App.Services;
@@ -62,19 +63,53 @@ public partial class App
         }
     }
 
-    private static void ApplyWindowIconSafely(Window window)
+    private void ApplyWindowIconSafely(Window window)
     {
         try
         {
-            // WPF's bitmap decoder does not support every valid Win32 ICO image.
-            // The bundled PNG is WPF-safe; the tray uses the native Windows icon.
+            // WPF uses the PNG only for XAML rendering. The taskbar and Windows
+            // Alt+Tab need native HICON handles, provided explicitly below.
             window.Icon = BitmapFrame.Create(MuxLogoUri);
         }
         catch (Exception exception)
         {
-            // Branding must never prevent MUX from opening.
             LogFailure("WindowIcon", exception);
         }
+
+        // Register before Show() or EnsureHandle() so a background launch also
+        // receives its icons as soon as the hidden message window is created.
+        window.SourceInitialized += (_, _) => ApplyNativeWindowIconsSafely(window);
+        window.Loaded += (_, _) => ApplyNativeWindowIconsSafely(window);
+    }
+
+    private void ApplyNativeWindowIconsSafely(Window window)
+    {
+        try
+        {
+            var hwnd = new System.Windows.Interop.WindowInteropHelper(window).Handle;
+            if (hwnd == IntPtr.Zero)
+            {
+                return;
+            }
+
+            _smallWindowIcon ??= LoadMuxIconAtSize(new System.Drawing.Size(16, 16));
+            _largeWindowIcon ??= LoadMuxIconAtSize(new System.Drawing.Size(32, 32));
+            SendMessage(hwnd, 0x0080, IntPtr.Zero, _smallWindowIcon.Handle); // WM_SETICON / ICON_SMALL
+            SendMessage(hwnd, 0x0080, new IntPtr(1), _largeWindowIcon.Handle); // WM_SETICON / ICON_BIG
+        }
+        catch (Exception exception)
+        {
+            LogFailure("NativeWindowIcon", exception);
+        }
+    }
+
+    private static Icon LoadMuxIconAtSize(System.Drawing.Size size)
+    {
+        var resource = Application.GetResourceStream(MuxIconUri)
+            ?? throw new InvalidOperationException("The native MUX icon was not embedded in the application.");
+        using var stream = resource.Stream;
+        using var icon = new Icon(stream, size);
+        return (Icon)icon.Clone();
     }
 
     private void InitializeTrayIconSafely()
@@ -248,6 +283,9 @@ public partial class App
             // Never allow diagnostic logging itself to become a startup failure.
         }
     }
+
+    [DllImport("user32.dll", EntryPoint = "SendMessageW")]
+    private static extern IntPtr SendMessage(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
 
     private sealed class MuxTrayColorTable : Forms.ProfessionalColorTable
     {

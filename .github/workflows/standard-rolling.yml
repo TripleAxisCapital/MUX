@@ -162,8 +162,45 @@ jobs:
           if ($null -eq $icon -or $icon.Width -lt 16) {
             throw "MUX.exe does not expose a usable Windows application icon."
           }
-          $icon.Dispose()
-          Write-Host "MUX.exe contains a usable Windows icon."
+          try {
+            # A generic Windows fallback icon also passes the old width-only test.
+            # Validate actual MUX branding pixels, and require all seven valid
+            # uncompressed frames rather than the old damaged PNG ICO frames.
+            $bytes = [System.IO.File]::ReadAllBytes($sourceIcon)
+            if ($bytes.Length -lt 300000 -or [BitConverter]::ToUInt16($bytes, 4) -ne 7) {
+              throw "The published MUX ICO is not the regenerated seven-size native icon."
+            }
+            $expected = [System.Drawing.Icon]::new($sourceIcon, [System.Drawing.Size]::new(32, 32))
+            try {
+              $actualBitmap = $icon.ToBitmap()
+              $expectedBitmap = $expected.ToBitmap()
+              try {
+                $dark = 0
+                $bright = 0
+                $different = 0
+                for ($y = 0; $y -lt [Math]::Min($actualBitmap.Height, $expectedBitmap.Height); $y++) {
+                  for ($x = 0; $x -lt [Math]::Min($actualBitmap.Width, $expectedBitmap.Width); $x++) {
+                    $pixel = $actualBitmap.GetPixel($x, $y)
+                    $reference = $expectedBitmap.GetPixel($x, $y)
+                    if ($pixel.A -gt 160 -and $pixel.R -lt 65 -and $pixel.G -lt 65 -and $pixel.B -lt 65) { $dark++ }
+                    if ($pixel.A -gt 160 -and $pixel.R -gt 150 -and $pixel.G -gt 150 -and $pixel.B -gt 150) { $bright++ }
+                    if ([Math]::Abs([int]$pixel.R - [int]$reference.R) -gt 40) { $different++ }
+                  }
+                }
+                if ($dark -lt 90 -or $bright -lt 10 -or $different -gt 130) {
+                  throw "Windows extracted a fallback or unbranded icon (dark=$dark bright=$bright different=$different)."
+                }
+                Write-Host "MUX.exe exposes the correct native icon with seven brand-specific sizes."
+              } finally {
+                $actualBitmap.Dispose()
+                $expectedBitmap.Dispose()
+              }
+            } finally {
+              $expected.Dispose()
+            }
+          } finally {
+            $icon.Dispose()
+          }
 
       - name: Package portable build
         shell: pwsh

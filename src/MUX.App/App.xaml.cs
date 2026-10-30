@@ -18,6 +18,10 @@ public partial class App : Application
     private Forms.ToolStripMenuItem? _predefinedAreasMenuItem;
     private MainWindow? _mainWindow;
     private Icon? _muxIcon;
+    // Win32 keeps these HICON handles by reference through WM_SETICON.
+    // Keep them alive for the lifetime of every MUX window.
+    private Icon? _smallWindowIcon;
+    private Icon? _largeWindowIcon;
     private StreamDeckCommandInbox? _streamDeckCommandInbox;
     private MuxUpdateService? _updateService;
     private bool _isExiting;
@@ -134,6 +138,7 @@ public partial class App : Application
         }
 
         _mainWindow.Show();
+        ApplyNativeWindowIconsSafely(_mainWindow);
         if (_mainWindow.WindowState == WindowState.Minimized)
         {
             _mainWindow.WindowState = WindowState.Normal;
@@ -156,6 +161,10 @@ public partial class App : Application
         _muxIcon?.Dispose();
         _muxIcon = null;
         _mainWindow?.Close();
+        _smallWindowIcon?.Dispose();
+        _smallWindowIcon = null;
+        _largeWindowIcon?.Dispose();
+        _largeWindowIcon = null;
         Shutdown();
     }
 
@@ -170,6 +179,8 @@ public partial class App : Application
         try { EnhancedEdgeCoverService.Shared.Dispose(); } catch { }
         _trayIcon?.Dispose();
         _muxIcon?.Dispose();
+        _smallWindowIcon?.Dispose();
+        _largeWindowIcon?.Dispose();
         base.OnExit(e);
     }
 }

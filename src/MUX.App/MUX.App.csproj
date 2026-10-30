@@ -30,6 +30,15 @@
     <PackageReference Include="Velopack" Version="1.2.161" />
   </ItemGroup>
 
+  <!-- Build a native multi-resolution Windows ICO from the canonical MUX logo
+       before WPF embeds resources and before the executable icon is compiled.
+       This repairs malformed legacy PNG-compressed frames at every build. -->
+  <Target Name="GenerateMuxNativeIcon"
+          BeforeTargets="AssignTargetPaths;ResolveApplicationIcon;CoreCompile"
+          Condition="'$(OS)' == 'Windows_NT'">
+    <Exec Command="powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\..\scripts\generate-mux-icon.ps1&quot; -SourcePath &quot;$(MSBuildProjectDirectory)\Assets\mux-logo.png&quot; -OutputPath &quot;$(MSBuildProjectDirectory)\Assets\mux-app.ico&quot;" />
+  </Target>
+
   <!-- Every published Standard package gets genuine NativeAOT Stream Deck helpers. -->
   <Target Name="PublishStreamDeckLaunchers" AfterTargets="Publish" Condition="'$(RuntimeIdentifier)' == 'win-x64'">
     <PropertyGroup>

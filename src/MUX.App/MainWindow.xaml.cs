@@ -33,7 +33,12 @@ public partial class MainWindow : Window
         SourceInitialized += MainWindow_SourceInitialized;
         Closing += MainWindow_Closing;
         WorkspaceCanvas.SelectedZoneChanged += WorkspaceCanvas_SelectedZoneChanged;
-        WorkspaceCanvas.LayoutChanged += async (_, _) => await SaveStateAsync();
+        WorkspaceCanvas.LayoutChanged += async (_, _) =>
+        {
+            ConfigureWindowManager();
+            RefreshZoneInspector(WorkspaceCanvas.SelectedZone);
+            await SaveStateAsync();
+        };
     }
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
@@ -431,9 +436,24 @@ public partial class MainWindow : Window
         ZoneInspector.Visibility = Visibility.Visible;
         ZoneNameBox.Text = zone.Name;
         ZoneSizeBox.Text = zone.DiagonalInches.ToString("0.##", CultureInfo.InvariantCulture);
+        // Preserve exact custom ratios after drag-resize; choosing a preset remains optional.
+        foreach (var previous in ZoneAspectBox.Items.OfType<ComboBoxItem>()
+                     .Where(item => Equals(item.Tag, "MUX_CUSTOM_RATIO")).ToList())
+            ZoneAspectBox.Items.Remove(previous);
+
         var target = zone.AspectLabel;
-        ZoneAspectBox.SelectedItem = ZoneAspectBox.Items.Cast<ComboBoxItem>().FirstOrDefault(item => item.Content?.ToString() == target)
-                                     ?? ZoneAspectBox.Items[0];
+        var preset = ZoneAspectBox.Items.OfType<ComboBoxItem>()
+            .FirstOrDefault(item => string.Equals(item.Content?.ToString(), target, StringComparison.Ordinal));
+        if (preset is null)
+        {
+            preset = new ComboBoxItem
+            {
+                Content = $"Custom {zone.AspectWidth / zone.AspectHeight:0.###}:1",
+                Tag = "MUX_CUSTOM_RATIO"
+            };
+            ZoneAspectBox.Items.Add(preset);
+        }
+        ZoneAspectBox.SelectedItem = preset;
     }
 
     private async void UpdateZone_Click(object sender, RoutedEventArgs e)
@@ -449,11 +469,20 @@ public partial class MainWindow : Window
             return;
         }
 
-        var aspectText = (ZoneAspectBox.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "16:9";
-        var parts = aspectText.Split(':');
-        if (parts.Length != 2 || !double.TryParse(parts[0], CultureInfo.InvariantCulture, out var aw) || !double.TryParse(parts[1], CultureInfo.InvariantCulture, out var ah))
+        var aspectItem = ZoneAspectBox.SelectedItem as ComboBoxItem;
+        double aw, ah;
+        if (Equals(aspectItem?.Tag, "MUX_CUSTOM_RATIO"))
         {
-            return;
+            aw = zone.AspectWidth;
+            ah = zone.AspectHeight;
+        }
+        else
+        {
+            var parts = (aspectItem?.Content?.ToString() ?? "16:9").Split(':');
+            if (parts.Length != 2 ||
+                !double.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out aw) ||
+                !double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out ah))
+                return;
         }
 
         var newSize = DisplayGeometry.PhysicalSizeFromDiagonal(diagonal, aw, ah);

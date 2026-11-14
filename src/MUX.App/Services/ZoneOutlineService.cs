@@ -41,6 +41,8 @@ public sealed class ZoneOutlineService : IDisposable
     private bool _enabled;
     private bool _showOutlines;
     private bool _shiftEditMode;
+    private bool _shiftToolbarPinned;
+    private DateTime _suppressLegacyHoverUntilUtc = DateTime.MinValue;
     private VirtualMonitorZone? _resizingZone;
     private PixelRect _resizeStartBounds;
     private NativePoint _resizeStartCursor;
@@ -85,7 +87,7 @@ public sealed class ZoneOutlineService : IDisposable
         {
             _shiftEditMode = false;
             ClearOutlines();
-            HideToolbar();
+            HideToolbar(force: true);
             _hoverTimer.Stop();
             return;
         }
@@ -139,29 +141,63 @@ public sealed class ZoneOutlineService : IDisposable
         if (!_enabled || _display is null || _layout is null || !GetCursorPos(out var cursor))
             return;
 
-        var shiftDown = (GetAsyncKeyState(VkShift) & 0x8000) != 0;
-        // Do not steal a drag that was already in progress when Shift was pressed.
-        if (!_shiftEditMode && (GetAsyncKeyState(VkLeftMouse) & 0x8000) != 0)
-            shiftDown = false;
+        // GetCursorPos returns virtual-desktop device pixels, matching DisplayProfile
+        // LeftPx/TopPx/WidthPx/HeightPx even with negative secondary-monitor origins.
+        // Shift must never cover a display other than the one beneath the pointer.
+        var cursorOnDisplay = CursorOnDisplay(cursor);
+        var shiftHeld = (GetAsyncKeyState(VkShift) & 0x8000) != 0;
+        var activeDrag = _resizingZone is not null || _draggingZone;
+        var shouldEdit = shiftHeld && cursorOnDisplay;
 
-        // A resize/move that started in edit mode always finishes even if Shift is released.
-        if (_resizingZone is not null || _draggingZone)
-            shiftDown = true;
+        // Preserve a resize/move gesture begun in edit mode when Shift is released
+        // or the pointer briefly crosses the physical monitor boundary.
+        if (activeDrag)
+            shouldEdit = true;
+        else if (!_shiftEditMode && (GetAsyncKeyState(VkLeftMouse) & 0x8000) != 0)
+            shouldEdit = false; // Shift must not hijack an existing app drag.
 
-        if (shiftDown != _shiftEditMode)
+        if (shouldEdit != _shiftEditMode)
         {
-            _shiftEditMode = shiftDown;
+            _shiftEditMode = shouldEdit;
+            if (!shouldEdit)
+            {
+                // A pinned toolbar belongs to the Shift session, not the legacy
+                // hover timer. Clear it immediately on release / monitor exit.
+                HideToolbar(force: true);
+                _suppressLegacyHoverUntilUtc = DateTime.UtcNow.AddMilliseconds(350);
+            }
             SyncOutlines();
         }
 
-        if (_draggingZone || _resizingZone is not null || IsToolbarInteracting() || CursorInsideToolbar(cursor))
+        if (_shiftEditMode)
+        {
+            if (_shiftToolbarPinned && _toolbarZone is not null && _toolbarWindow?.IsVisible != true)
+                ShowToolbar(_toolbarZone);
+
+            // Once a quadrant menu has been opened, keep it visible and on the
+            // same quadrant for the entire Shift session, regardless of hover.
+            // Only release Shift, leave this monitor or finish an active drag
+            // with Shift already released to close the menu.
+            _lastHoverUtc = DateTime.UtcNow;
+            return;
+        }
+
+        if (!cursorOnDisplay)
+        {
+            HideToolbar(force: true);
+            return;
+        }
+
+        if (IsToolbarInteracting() || CursorInsideToolbar(cursor))
         {
             _lastHoverUtc = DateTime.UtcNow;
             return;
         }
 
-        // Shift overlays use explicit menu buttons rather than accidental edge hover.
-        var hovered = _showOutlines && !_shiftEditMode ? FindTopEdgeZone(cursor) : null;
+        // Preserve original hover-toolbar behavior when persistent outlines are on.
+        var hovered = _showOutlines && DateTime.UtcNow >= _suppressLegacyHoverUntilUtc
+            ? FindTopEdgeZone(cursor)
+            : null;
         if (hovered is not null)
         {
             _lastHoverUtc = DateTime.UtcNow;
@@ -172,6 +208,16 @@ public sealed class ZoneOutlineService : IDisposable
         if (_toolbarWindow?.IsVisible == true &&
             DateTime.UtcNow - _lastHoverUtc > TimeSpan.FromMilliseconds(650))
             HideToolbar();
+    }
+
+    private bool CursorOnDisplay(NativePoint cursor)
+    {
+        var display = _display;
+        return display is not null && display.WidthPx > 0 && display.HeightPx > 0 &&
+               (long)cursor.X >= display.LeftPx &&
+               (long)cursor.X < (long)display.LeftPx + display.WidthPx &&
+               (long)cursor.Y >= display.TopPx &&
+               (long)cursor.Y < (long)display.TopPx + display.HeightPx;
     }
 
     private VirtualMonitorZone? FindTopEdgeZone(NativePoint cursor)
@@ -240,13 +286,12 @@ public sealed class ZoneOutlineService : IDisposable
         PositionToolbar(zone);
     }
 
-    private void HideToolbar()
+    private void HideToolbar(bool force = false)
     {
-        if (_draggingZone || IsToolbarInteracting())
-        {
+        if (!force && (_draggingZone || _resizingZone is not null || IsToolbarInteracting()))
             return;
-        }
 
+        _shiftToolbarPinned = false;
         _colorPopup?.SetCurrentValue(Popup.IsOpenProperty, false);
         _toolbarWindow?.Hide();
         _toolbarZone = null;
@@ -265,7 +310,7 @@ public sealed class ZoneOutlineService : IDisposable
             VerticalAlignment = VerticalAlignment.Center
         };
 
-        _moveButton = CreateToolbarButton("Move", "Drag to reposition this virtual monitor", 50);
+        _moveButton = CreateToolbarButton("Move", "Drag to reposition this virtual monitor", 62);
         _moveButton.Cursor = Cursors.SizeAll;
         _moveButton.PreviewMouseLeftButtonDown += MoveButton_MouseLeftButtonDown;
         _moveButton.PreviewMouseMove += MoveButton_MouseMove;
@@ -275,12 +320,13 @@ public sealed class ZoneOutlineService : IDisposable
 
         _sizeBox = new TextBox
         {
-            Width = 58,
-            Height = 32,
-            Padding = new Thickness(8, 5, 8, 5),
+            Width = 88,
+            Height = 36,
+            Padding = new Thickness(9, 6, 9, 6),
+            FontSize = 12,
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,
-            ToolTip = "Diagonal size in inches"
+            ToolTip = "Physical diagonal (inches)"
         };
         SetStyle(_sizeBox, "MuxTextBox");
         _sizeBox.KeyDown += SizeBox_KeyDown;
@@ -289,12 +335,13 @@ public sealed class ZoneOutlineService : IDisposable
 
         _aspectBox = new ComboBox
         {
-            Width = 82,
-            Height = 32,
-            MinHeight = 32,
-            Margin = new Thickness(6, 0, 0, 0),
-            Padding = new Thickness(8, 5, 6, 5),
-            ToolTip = "Aspect ratio"
+            Width = 132,
+            Height = 36,
+            MinHeight = 36,
+            Margin = new Thickness(8, 0, 0, 0),
+            Padding = new Thickness(7, 6, 6, 6),
+            HorizontalContentAlignment = HorizontalAlignment.Left,
+            ToolTip = "Aspect ratio · custom sizes are retained"
         };
         SetStyle(_aspectBox, "MuxComboBox");
         foreach (var preset in AspectPresets)
@@ -305,7 +352,7 @@ public sealed class ZoneOutlineService : IDisposable
         row.Children.Add(_aspectBox);
         row.Children.Add(CreateDivider());
 
-        var clone = CreateToolbarButton("⧉", "Clone this virtual monitor", 34);
+        var clone = CreateToolbarButton("⧉", "Clone this virtual monitor", 38);
         clone.FontSize = 17;
         clone.Click += (_, _) => CloneCurrentZone();
         row.Children.Add(clone);
@@ -317,11 +364,11 @@ public sealed class ZoneOutlineService : IDisposable
 
         _thicknessBox = new ComboBox
         {
-            Width = 64,
-            Height = 32,
-            MinHeight = 32,
-            Margin = new Thickness(6, 0, 0, 0),
-            Padding = new Thickness(8, 5, 6, 5),
+            Width = 92,
+            Height = 36,
+            MinHeight = 36,
+            Margin = new Thickness(8, 0, 0, 0),
+            Padding = new Thickness(7, 6, 6, 6),
             ToolTip = "Outline thickness"
         };
         SetStyle(_thicknessBox, "MuxComboBox");
@@ -337,8 +384,8 @@ public sealed class ZoneOutlineService : IDisposable
             Background = new SolidColorBrush(Color.FromArgb(246, 20, 20, 22)),
             BorderBrush = new SolidColorBrush(Color.FromArgb(92, 255, 255, 255)),
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(22),
-            Padding = new Thickness(7, 6, 7, 6),
+            CornerRadius = new CornerRadius(23),
+            Padding = new Thickness(10, 7, 10, 7),
             Child = row,
             Effect = new DropShadowEffect
             {
@@ -371,12 +418,14 @@ public sealed class ZoneOutlineService : IDisposable
         {
             Content = content,
             Width = width,
-            Height = 32,
-            Padding = new Thickness(8, 4, 8, 4),
+            Height = 36,
+            Padding = new Thickness(8, 5, 8, 5),
             Margin = new Thickness(0),
             ToolTip = tooltip,
             FontSize = 11.5,
             FontWeight = FontWeights.Medium,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
             Foreground = new SolidColorBrush(Color.FromRgb(235, 235, 240)),
             Background = Brushes.Transparent,
             BorderBrush = Brushes.Transparent,
@@ -385,7 +434,7 @@ public sealed class ZoneOutlineService : IDisposable
         SetStyle(button, "MuxButton");
         button.Background = Brushes.Transparent;
         button.BorderBrush = Brushes.Transparent;
-        button.Padding = new Thickness(8, 4, 8, 4);
+        button.Padding = new Thickness(8, 5, 8, 5);
         return button;
     }
 
@@ -411,7 +460,7 @@ public sealed class ZoneOutlineService : IDisposable
             StrokeThickness = 1
         };
 
-        var button = CreateToolbarButton(string.Empty, "Outline color", 34);
+        var button = CreateToolbarButton(string.Empty, "Outline color", 38);
         button.Content = ellipse;
         return button;
     }
@@ -900,7 +949,8 @@ public sealed class ZoneOutlineService : IDisposable
         menu.Click += (_, _) =>
         {
             var zone = _layout?.Zones.FirstOrDefault(candidate => candidate.Id == zoneId);
-            if (zone is null) return;
+            if (zone is null || !_shiftEditMode) return;
+            _shiftToolbarPinned = true;
             _lastHoverUtc = DateTime.UtcNow;
             ShowToolbar(zone);
         };

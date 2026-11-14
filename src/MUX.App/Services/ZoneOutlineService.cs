@@ -25,6 +25,7 @@ public sealed class ZoneOutlineService : IDisposable
     private const uint SwpNoActivate = 0x0010;
     private const uint SwpShowWindow = 0x0040;
     private const int HoverBandPx = 10;
+    private const int SurfaceResizeBandPx = 56;
     private const int VkShift = 0x10;
     private const int VkLeftMouse = 0x01;
     private const int ToolbarGapPx = 8;
@@ -48,6 +49,13 @@ public sealed class ZoneOutlineService : IDisposable
     private NativePoint _resizeStartCursor;
     private int _resizeHorizontalEdge;
     private int _resizeVerticalEdge;
+    private VirtualMonitorZone? _surfaceGestureZone;
+    private Border? _surfaceGestureBorder;
+    private PixelRect _surfaceGestureStartRect;
+    private NativePoint _surfaceGestureStartCursor;
+    private int _surfaceGestureHorizontalEdge;
+    private int _surfaceGestureVerticalEdge;
+    private bool _surfaceGestureChanged;
     private double _defaultThickness = 2.0;
     private Window? _toolbarWindow;
     private Border? _toolbarShell;
@@ -146,7 +154,7 @@ public sealed class ZoneOutlineService : IDisposable
         // Shift must never cover a display other than the one beneath the pointer.
         var cursorOnDisplay = CursorOnDisplay(cursor);
         var shiftHeld = (GetAsyncKeyState(VkShift) & 0x8000) != 0;
-        var activeDrag = _resizingZone is not null || _draggingZone;
+        var activeDrag = _resizingZone is not null || _draggingZone || _surfaceGestureZone is not null;
         var shouldEdit = shiftHeld && cursorOnDisplay;
 
         // Preserve a resize/move gesture begun in edit mode when Shift is released
@@ -994,12 +1002,24 @@ public sealed class ZoneOutlineService : IDisposable
 
         var border = new Border
         {
+            Tag = zoneId,
             Background = Brushes.Transparent,
             BorderBrush = Brushes.Black,
             BorderThickness = new Thickness(2),
             SnapsToDevicePixels = true,
             IsHitTestVisible = false,
             Child = content
+        };
+        // Every pixel of the surface is actionable during Shift editing:
+        // the 56-device-pixel perimeter resizes, the remaining interior moves.
+        // Thumb handles and the menu button retain priority over the surface.
+        border.PreviewMouseLeftButtonDown += ZoneSurface_MouseLeftButtonDown;
+        border.PreviewMouseMove += ZoneSurface_MouseMove;
+        border.PreviewMouseLeftButtonUp += ZoneSurface_MouseLeftButtonUp;
+        border.LostMouseCapture += (_, _) =>
+        {
+            if (ReferenceEquals(_surfaceGestureBorder, border))
+                FinishZoneSurfaceGesture();
         };
         var window = new Window
         {
@@ -1017,6 +1037,177 @@ public sealed class ZoneOutlineService : IDisposable
         window.SourceInitialized += (_, _) => SetClickThrough(window, true);
         window.Show();
         return new OutlineVisual(window, border, label, menu, grips);
+    }
+
+    private static bool OriginatesFromSurfaceControl(DependencyObject? source, DependencyObject surface)
+    {
+        for (var current = source; current is not null && !ReferenceEquals(current, surface);
+             current = VisualTreeHelper.GetParent(current))
+        {
+            // Never hijack the eight existing resize grips or the quadrant menu.
+            if (current is Thumb or ButtonBase)
+                return true;
+        }
+        return false;
+    }
+
+    private static (int Horizontal, int Vertical) HitTestSurfaceEdges(PixelRect rect, NativePoint cursor)
+    {
+        // Use native Windows device pixels rather than WPF DIPs. On smaller
+        // workspaces shrink the hit bands to leave a usable draggable center.
+        var bandX = Math.Min(SurfaceResizeBandPx, Math.Max(8, rect.Width / 3));
+        var bandY = Math.Min(SurfaceResizeBandPx, Math.Max(8, rect.Height / 3));
+
+        var horizontal = cursor.X - rect.Left < bandX ? -1
+            : rect.Right - cursor.X <= bandX ? 1 : 0;
+        var vertical = cursor.Y - rect.Top < bandY ? -1
+            : rect.Bottom - cursor.Y <= bandY ? 1 : 0;
+        return (horizontal, vertical);
+    }
+
+    private static Cursor CursorForSurfaceEdges(int horizontal, int vertical)
+    {
+        if (horizontal != 0 && vertical != 0)
+            return horizontal == vertical ? Cursors.SizeNWSE : Cursors.SizeNESW;
+        if (horizontal != 0)
+            return Cursors.SizeWE;
+        if (vertical != 0)
+            return Cursors.SizeNS;
+        return Cursors.SizeAll;
+    }
+
+    private void ZoneSurface_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (!_shiftEditMode || _display is null || _layout is null ||
+            _resizingZone is not null || _draggingZone || _surfaceGestureZone is not null ||
+            sender is not Border border || border.Tag is not Guid zoneId ||
+            OriginatesFromSurfaceControl(e.OriginalSource as DependencyObject, border) ||
+            !GetCursorPos(out var cursor))
+            return;
+
+        var zone = _layout.Zones.FirstOrDefault(candidate => candidate.Id == zoneId);
+        if (zone is null)
+            return;
+
+        var bounds = DisplayGeometry.ZoneToPixels(_display, zone, includeDisplayOffset: true);
+        var edges = HitTestSurfaceEdges(bounds, cursor);
+        if (!border.CaptureMouse())
+            return;
+
+        _surfaceGestureZone = zone;
+        _surfaceGestureBorder = border;
+        _surfaceGestureStartRect = DisplayGeometry.ZoneToPixels(_display, zone, includeDisplayOffset: false);
+        _surfaceGestureStartCursor = cursor;
+        _surfaceGestureHorizontalEdge = edges.Horizontal;
+        _surfaceGestureVerticalEdge = edges.Vertical;
+        _surfaceGestureChanged = false;
+        border.Cursor = CursorForSurfaceEdges(edges.Horizontal, edges.Vertical);
+        _lastHoverUtc = DateTime.UtcNow;
+        e.Handled = true;
+    }
+
+    private void ZoneSurface_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (!_shiftEditMode || _display is null || sender is not Border border ||
+            border.Tag is not Guid zoneId)
+            return;
+
+        if (ReferenceEquals(_surfaceGestureBorder, border))
+        {
+            if (e.LeftButton != MouseButtonState.Pressed)
+                FinishZoneSurfaceGesture();
+            else
+                UpdateZoneSurfaceGesture();
+            e.Handled = true;
+            return;
+        }
+
+        if (_surfaceGestureZone is not null ||
+            OriginatesFromSurfaceControl(e.OriginalSource as DependencyObject, border) ||
+            !GetCursorPos(out var cursor))
+            return;
+
+        var zone = _layout?.Zones.FirstOrDefault(candidate => candidate.Id == zoneId);
+        if (zone is null)
+            return;
+
+        var edges = HitTestSurfaceEdges(DisplayGeometry.ZoneToPixels(_display, zone), cursor);
+        border.Cursor = CursorForSurfaceEdges(edges.Horizontal, edges.Vertical);
+    }
+
+    private void ZoneSurface_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not Border border || !ReferenceEquals(_surfaceGestureBorder, border))
+            return;
+
+        UpdateZoneSurfaceGesture(); // Include the exact final cursor position.
+        FinishZoneSurfaceGesture();
+        e.Handled = true;
+    }
+
+    private void UpdateZoneSurfaceGesture()
+    {
+        if (_surfaceGestureZone is null || _display is null ||
+            !GetCursorPos(out var cursor))
+            return;
+
+        var dx = cursor.X - _surfaceGestureStartCursor.X;
+        var dy = cursor.Y - _surfaceGestureStartCursor.Y;
+        var start = _surfaceGestureStartRect;
+        var isResize = _surfaceGestureHorizontalEdge != 0 || _surfaceGestureVerticalEdge != 0;
+
+        if (isResize)
+        {
+            var resized = DisplayGeometry.ResizeZoneRectangle(
+                start, dx, dy, _surfaceGestureHorizontalEdge, _surfaceGestureVerticalEdge,
+                _display.WidthPx, _display.HeightPx);
+            if (resized.Equals(DisplayGeometry.ZoneToPixels(_display, _surfaceGestureZone, includeDisplayOffset: false)))
+                return;
+            DisplayGeometry.SetZonePixelBounds(_display, _surfaceGestureZone, resized);
+        }
+        else
+        {
+            // Moving a workspace must not alter its exact aspect ratio or diagonal.
+            var left = Math.Clamp((long)start.Left + dx, 0, Math.Max(0, _display.WidthPx - start.Width));
+            var top = Math.Clamp((long)start.Top + dy, 0, Math.Max(0, _display.HeightPx - start.Height));
+            var ppi = DisplayGeometry.PixelsPerInch(_display);
+            var newX = left / ppi;
+            var newY = top / ppi;
+            if (Math.Abs(newX - _surfaceGestureZone.XInches) < 0.00001 &&
+                Math.Abs(newY - _surfaceGestureZone.YInches) < 0.00001)
+                return;
+            _surfaceGestureZone.XInches = newX;
+            _surfaceGestureZone.YInches = newY;
+        }
+
+        _surfaceGestureChanged = true;
+        if (_outlines.TryGetValue(_surfaceGestureZone.Id, out var visual))
+            UpdateOutline(_surfaceGestureZone, visual);
+
+        if (_toolbarZone?.Id == _surfaceGestureZone.Id)
+        {
+            if (isResize)
+                SyncToolbar(_surfaceGestureZone);
+            PositionToolbar(_surfaceGestureZone);
+        }
+    }
+
+    private void FinishZoneSurfaceGesture()
+    {
+        if (_surfaceGestureZone is null)
+            return;
+
+        var border = _surfaceGestureBorder;
+        var changed = _surfaceGestureChanged;
+        _surfaceGestureZone = null;
+        _surfaceGestureBorder = null;
+        _surfaceGestureChanged = false;
+        if (border?.IsMouseCaptured == true)
+            border.ReleaseMouseCapture();
+
+        _lastHoverUtc = DateTime.UtcNow;
+        if (changed)
+            RaiseLayoutEdited(); // Persist once, not on every mouse movement.
     }
 
     private void BeginZoneResize(Guid zoneId, int horizontal, int vertical)

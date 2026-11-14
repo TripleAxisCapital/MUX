@@ -97,7 +97,9 @@ public static class ZoneMagnetism
         void Consider(int delta, int priority)
         {
             var distance = Math.Abs((long)delta);
-            if (distance > threshold || distance > bestDistance ||
+            // Alignment must never push the workspace beyond the physical panel.
+            if ((long)start + delta < 0 || (long)end + delta > physicalExtent ||
+                distance > threshold || distance > bestDistance ||
                 (distance == bestDistance && priority >= bestPriority))
                 return;
             bestDelta = delta;

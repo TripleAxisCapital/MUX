@@ -58,7 +58,7 @@
                 CornerRadius="9"
                 Padding="10,6"
                 IsHitTestVisible="False">
-            <TextBlock Text="DRAG TO POSITION  ·  PHYSICAL SCALE LOCKED  ·  ESC TO CANCEL"
+            <TextBlock Text="DRAG TO POSITION  ·  DRAG HANDLES TO RESIZE  ·  ESC TO CANCEL"
                        Foreground="#9A9A9A"
                        FontSize="8"
                        FontWeight="SemiBold" />

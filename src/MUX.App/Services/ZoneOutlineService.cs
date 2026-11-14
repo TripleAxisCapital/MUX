@@ -28,6 +28,7 @@ public sealed class ZoneOutlineService : IDisposable
     private const int SurfaceResizeBandPx = 56;
     private const int VkShift = 0x10;
     private const int VkLeftMouse = 0x01;
+    private const int VkControl = 0x11;
     private const int ToolbarGapPx = 8;
     private static readonly IntPtr HwndTopmost = new(-1);
     private static readonly string[] AspectPresets = ["16:9", "16:10", "21:9", "32:9", "4:3", "3:2"];
@@ -70,8 +71,7 @@ public sealed class ZoneOutlineService : IDisposable
     private DateTime _lastHoverUtc = DateTime.MinValue;
     private bool _draggingZone;
     private NativePoint _dragStartCursor;
-    private double _dragStartX;
-    private double _dragStartY;
+    private PixelRect _toolbarMoveStartBounds;
     private Button? _moveButton;
 
     public ZoneOutlineService()
@@ -751,6 +751,11 @@ public sealed class ZoneOutlineService : IDisposable
         RaiseLayoutEdited();
     }
 
+    /// <summary>Ctrl+Shift bypasses snapping only during the active edit gesture.</summary>
+    private static bool MagneticAlignmentDisabled()
+        => (GetAsyncKeyState(VkShift) & 0x8000) != 0 &&
+           (GetAsyncKeyState(VkControl) & 0x8000) != 0;
+
     private void MoveButton_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         if (_toolbarZone is null || _display is null || _moveButton is null || !GetCursorPos(out _dragStartCursor))
@@ -759,8 +764,7 @@ public sealed class ZoneOutlineService : IDisposable
         }
 
         _draggingZone = true;
-        _dragStartX = _toolbarZone.XInches;
-        _dragStartY = _toolbarZone.YInches;
+        _toolbarMoveStartBounds = DisplayGeometry.ZoneToPixels(_display, _toolbarZone, includeDisplayOffset: false);
         _moveButton.CaptureMouse();
         e.Handled = true;
     }
@@ -772,10 +776,21 @@ public sealed class ZoneOutlineService : IDisposable
             return;
         }
 
+        // Always calculate from the raw pointer delta, not the previous snapped
+        // position. Moving beyond the magnetic radius cleanly releases the snap.
+        var origin = _toolbarMoveStartBounds;
+        var proposed = new PixelRect(
+            (int)Math.Clamp((long)origin.Left + cursor.X - _dragStartCursor.X,
+                0, Math.Max(0, _display.WidthPx - origin.Width)),
+            (int)Math.Clamp((long)origin.Top + cursor.Y - _dragStartCursor.Y,
+                0, Math.Max(0, _display.HeightPx - origin.Height)),
+            origin.Width, origin.Height);
+        if (!MagneticAlignmentDisabled() && _layout is not null)
+            proposed = ZoneMagnetism.SnapMoved(_display, _layout, _toolbarZone.Id, proposed);
+
         var ppi = DisplayGeometry.PixelsPerInch(_display);
-        _toolbarZone.XInches = _dragStartX + (cursor.X - _dragStartCursor.X) / ppi;
-        _toolbarZone.YInches = _dragStartY + (cursor.Y - _dragStartCursor.Y) / ppi;
-        DisplayGeometry.ClampZoneToDisplay(_display, _toolbarZone);
+        _toolbarZone.XInches = proposed.Left / ppi;
+        _toolbarZone.YInches = proposed.Top / ppi;
         UpdateCurrentZoneVisual();
         _lastHoverUtc = DateTime.UtcNow;
         e.Handled = true;
@@ -1161,6 +1176,9 @@ public sealed class ZoneOutlineService : IDisposable
             var resized = DisplayGeometry.ResizeZoneRectangle(
                 start, dx, dy, _surfaceGestureHorizontalEdge, _surfaceGestureVerticalEdge,
                 _display.WidthPx, _display.HeightPx);
+            if (!MagneticAlignmentDisabled() && _layout is not null)
+                resized = ZoneMagnetism.SnapResized(_display, _layout, _surfaceGestureZone.Id,
+                    resized, _surfaceGestureHorizontalEdge, _surfaceGestureVerticalEdge);
             if (resized.Equals(DisplayGeometry.ZoneToPixels(_display, _surfaceGestureZone, includeDisplayOffset: false)))
                 return;
             DisplayGeometry.SetZonePixelBounds(_display, _surfaceGestureZone, resized);
@@ -1171,8 +1189,11 @@ public sealed class ZoneOutlineService : IDisposable
             var left = Math.Clamp((long)start.Left + dx, 0, Math.Max(0, _display.WidthPx - start.Width));
             var top = Math.Clamp((long)start.Top + dy, 0, Math.Max(0, _display.HeightPx - start.Height));
             var ppi = DisplayGeometry.PixelsPerInch(_display);
-            var newX = left / ppi;
-            var newY = top / ppi;
+            var proposed = new PixelRect((int)left, (int)top, start.Width, start.Height);
+            if (!MagneticAlignmentDisabled() && _layout is not null)
+                proposed = ZoneMagnetism.SnapMoved(_display, _layout, _surfaceGestureZone.Id, proposed);
+            var newX = proposed.Left / ppi;
+            var newY = proposed.Top / ppi;
             if (Math.Abs(newX - _surfaceGestureZone.XInches) < 0.00001 &&
                 Math.Abs(newY - _surfaceGestureZone.YInches) < 0.00001)
                 return;
@@ -1231,6 +1252,9 @@ public sealed class ZoneOutlineService : IDisposable
         var rect = DisplayGeometry.ResizeZoneRectangle(
             _resizeStartBounds, cursor.X - _resizeStartCursor.X, cursor.Y - _resizeStartCursor.Y,
             _resizeHorizontalEdge, _resizeVerticalEdge, _display.WidthPx, _display.HeightPx);
+        if (!MagneticAlignmentDisabled() && _layout is not null)
+            rect = ZoneMagnetism.SnapResized(_display, _layout, _resizingZone.Id,
+                rect, _resizeHorizontalEdge, _resizeVerticalEdge);
         DisplayGeometry.SetZonePixelBounds(_display, _resizingZone, rect);
         if (_outlines.TryGetValue(_resizingZone.Id, out var visual))
             UpdateOutline(_resizingZone, visual);

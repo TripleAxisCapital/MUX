@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using MUX.Core.Geometry;
@@ -18,6 +19,12 @@ public partial class LayoutCanvas : UserControl
     private double _startY;
     private Rect _displayRect;
     private double _scale;
+    private VirtualMonitorZone? _resizingZone;
+    private Border? _resizingElement;
+    private PixelRect _resizeOrigin;
+    private Point _resizePointerOrigin;
+    private int _resizeHorizontalEdge;
+    private int _resizeVerticalEdge;
 
     public event EventHandler<VirtualMonitorZone?>? SelectedZoneChanged;
     public event EventHandler? LayoutChanged;
@@ -153,6 +160,7 @@ public partial class LayoutCanvas : UserControl
             }
         };
 
+        AddResizeHandles((Grid)border.Child, zone, border, isSelected);
         Canvas.SetLeft(border, _displayRect.Left + px.Left * _scale);
         Canvas.SetTop(border, _displayRect.Top + px.Top * _scale);
 
@@ -162,12 +170,98 @@ public partial class LayoutCanvas : UserControl
         HostCanvas.Children.Add(border);
     }
 
+    private void AddResizeHandles(Grid grid, VirtualMonitorZone zone, Border border, bool selected)
+    {
+        var grips = new (int X, int Y, HorizontalAlignment Horizontal, VerticalAlignment Vertical, Cursor Cursor)[]
+        {
+            (-1, -1, HorizontalAlignment.Left, VerticalAlignment.Top, Cursors.SizeNWSE),
+            ( 0, -1, HorizontalAlignment.Center, VerticalAlignment.Top, Cursors.SizeNS),
+            ( 1, -1, HorizontalAlignment.Right, VerticalAlignment.Top, Cursors.SizeNESW),
+            (-1,  0, HorizontalAlignment.Left, VerticalAlignment.Center, Cursors.SizeWE),
+            ( 1,  0, HorizontalAlignment.Right, VerticalAlignment.Center, Cursors.SizeWE),
+            (-1,  1, HorizontalAlignment.Left, VerticalAlignment.Bottom, Cursors.SizeNESW),
+            ( 0,  1, HorizontalAlignment.Center, VerticalAlignment.Bottom, Cursors.SizeNS),
+            ( 1,  1, HorizontalAlignment.Right, VerticalAlignment.Bottom, Cursors.SizeNWSE)
+        };
+
+        foreach (var grip in grips)
+        {
+            var thumb = new Thumb
+            {
+                Width = grip.X == 0 ? 24 : 13,
+                Height = grip.Y == 0 ? 24 : 13,
+                HorizontalAlignment = grip.Horizontal,
+                VerticalAlignment = grip.Vertical,
+                Cursor = grip.Cursor,
+                Opacity = selected ? 0.95 : 0.55,
+                Background = new SolidColorBrush(Color.FromRgb(190, 190, 197)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(40, 40, 45)),
+                BorderThickness = new Thickness(1),
+                ToolTip = "Drag to resize · freeform aspect ratio"
+            };
+            thumb.DragStarted += (_, _) => BeginResize(zone, border, grip.X, grip.Y);
+            thumb.DragDelta += (_, _) => UpdateResize();
+            thumb.DragCompleted += (_, _) => CompleteResize();
+            Panel.SetZIndex(thumb, 10);
+            grid.Children.Add(thumb);
+        }
+    }
+
+    private void BeginResize(VirtualMonitorZone zone, Border border, int horizontal, int vertical)
+    {
+        if (_display is null)
+            return;
+
+        _selectedZone = zone;
+        SelectedZoneChanged?.Invoke(this, zone);
+        _resizingZone = zone;
+        _resizingElement = border;
+        _resizeOrigin = DisplayGeometry.ZoneToPixels(_display, zone, includeDisplayOffset: false);
+        _resizePointerOrigin = Mouse.GetPosition(HostCanvas);
+        _resizeHorizontalEdge = horizontal;
+        _resizeVerticalEdge = vertical;
+    }
+
+    private void UpdateResize()
+    {
+        if (_display is null || _resizingZone is null || _resizingElement is null || _scale <= 0)
+            return;
+
+        var pointer = Mouse.GetPosition(HostCanvas);
+        var deltaX = (int)Math.Round((pointer.X - _resizePointerOrigin.X) / _scale);
+        var deltaY = (int)Math.Round((pointer.Y - _resizePointerOrigin.Y) / _scale);
+        var resized = DisplayGeometry.ResizeZoneRectangle(
+            _resizeOrigin, deltaX, deltaY, _resizeHorizontalEdge, _resizeVerticalEdge,
+            _display.WidthPx, _display.HeightPx);
+        DisplayGeometry.SetZonePixelBounds(_display, _resizingZone, resized);
+        _resizingElement.Width = Math.Max(12, resized.Width * _scale);
+        _resizingElement.Height = Math.Max(12, resized.Height * _scale);
+        Canvas.SetLeft(_resizingElement, _displayRect.Left + resized.Left * _scale);
+        Canvas.SetTop(_resizingElement, _displayRect.Top + resized.Top * _scale);
+    }
+
+    private void CompleteResize()
+    {
+        if (_resizingZone is null)
+            return;
+
+        _resizingZone = null;
+        _resizingElement = null;
+        Render();
+        LayoutChanged?.Invoke(this, EventArgs.Empty);
+    }
+
     private void ZoneMouseDown(object sender, MouseButtonEventArgs e)
     {
         if (sender is not Border border || border.Tag is not VirtualMonitorZone zone)
         {
             return;
         }
+
+        // A Thumb captures its own drag; do not rebuild the visual underneath it.
+        if (_resizingZone is not null || e.OriginalSource is Thumb ||
+            e.OriginalSource is FrameworkElement { TemplatedParent: Thumb })
+            return;
 
         e.Handled = true;
         _selectedZone = zone;

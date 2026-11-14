@@ -104,7 +104,7 @@ public sealed class WindowManagerService : IDisposable
 
     public void RefreshOutlines()
     {
-        _outlineService.Configure(_display, _layout, _enabled && _showOutlines, _outlineThickness);
+        _outlineService.Configure(_display, _layout, _enabled, _showOutlines, _outlineThickness);
     }
 
     public void ToggleForegroundZoneMaximize()

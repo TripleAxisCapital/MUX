@@ -180,6 +180,59 @@ public static class DisplayGeometry
         return new PixelRect(left, top, width, height);
     }
 
+    /// <summary>
+    /// Resize an axis-aligned workspace rectangle with fixed opposite edges.
+    /// Edge directions are -1 for left/top, 0 for unchanged, 1 for right/bottom.
+    /// All coordinates are physical display pixels, independent of WPF DPI scaling.
+    /// </summary>
+    public static PixelRect ResizeZoneRectangle(
+        PixelRect start, int deltaX, int deltaY, int horizontalEdge, int verticalEdge,
+        int displayWidthPx, int displayHeightPx, int minimumWidthPx = 96, int minimumHeightPx = 72)
+    {
+        if (displayWidthPx <= 0 || displayHeightPx <= 0)
+            throw new ArgumentOutOfRangeException(nameof(displayWidthPx));
+
+        var minimumWidth = Math.Min(Math.Max(1, minimumWidthPx), displayWidthPx);
+        var minimumHeight = Math.Min(Math.Max(1, minimumHeightPx), displayHeightPx);
+        var left = start.Left;
+        var right = start.Right;
+        var top = start.Top;
+        var bottom = start.Bottom;
+
+        if (horizontalEdge < 0)
+            left = Math.Clamp(start.Left + deltaX, 0, start.Right - minimumWidth);
+        else if (horizontalEdge > 0)
+            right = Math.Clamp(start.Right + deltaX, start.Left + minimumWidth, displayWidthPx);
+
+        if (verticalEdge < 0)
+            top = Math.Clamp(start.Top + deltaY, 0, start.Bottom - minimumHeight);
+        else if (verticalEdge > 0)
+            bottom = Math.Clamp(start.Bottom + deltaY, start.Top + minimumHeight, displayHeightPx);
+
+        return new PixelRect(left, top, Math.Max(1, right - left), Math.Max(1, bottom - top));
+    }
+
+    /// <summary>
+    /// Persist a freely resized zone using the existing diagonal/ratio layout format.
+    /// Exact pixel proportions are retained rather than rounded to an aspect preset.
+    /// </summary>
+    public static void SetZonePixelBounds(DisplayProfile display, VirtualMonitorZone zone, PixelRect bounds)
+    {
+        ArgumentNullException.ThrowIfNull(display);
+        ArgumentNullException.ThrowIfNull(zone);
+        var ppi = PixelsPerInch(display);
+        var left = Math.Clamp(bounds.Left, 0, display.WidthPx - 1);
+        var top = Math.Clamp(bounds.Top, 0, display.HeightPx - 1);
+        var width = Math.Clamp(bounds.Width, 1, display.WidthPx - left);
+        var height = Math.Clamp(bounds.Height, 1, display.HeightPx - top);
+
+        zone.XInches = left / ppi;
+        zone.YInches = top / ppi;
+        zone.AspectWidth = width;
+        zone.AspectHeight = height;
+        zone.DiagonalInches = Math.Sqrt((double)width * width + (double)height * height) / ppi;
+    }
+
     public static void ClampZoneToDisplay(DisplayProfile display, VirtualMonitorZone zone)
     {
         var displaySize = DisplayPhysicalSize(display);

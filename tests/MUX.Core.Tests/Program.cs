@@ -240,6 +240,74 @@ Run("invalid rectangular reference length is rejected", () =>
     }
 });
 
+
+Run("magnetic move attaches opposing edges and aligns tops", () =>
+{
+    var display = new DisplayProfile { WidthPx = 1600, HeightPx = 900, DiagonalInches = 50 };
+    var layout = new LayoutProfile();
+    var moving = new VirtualMonitorZone();
+    var neighbor = new VirtualMonitorZone();
+    DisplayGeometry.SetZonePixelBounds(display, moving, new PixelRect(100, 200, 300, 300));
+    DisplayGeometry.SetZonePixelBounds(display, neighbor, new PixelRect(700, 200, 400, 300));
+    layout.Zones.Add(moving);
+    layout.Zones.Add(neighbor);
+
+    var rect = ZoneMagnetism.SnapMoved(display, layout, moving.Id, new PixelRect(389, 208, 300, 300));
+    Near(rect.Left, 400, 0, "touching neighbor's left edge");
+    Near(rect.Top, 200, 0, "top edge alignment");
+    Near(rect.Width, 300, 0, "unchanged width");
+    Near(rect.Height, 300, 0, "unchanged height");
+});
+
+Run("magnetic move leaves distant or non-adjacent regions alone", () =>
+{
+    var display = new DisplayProfile { WidthPx = 1600, HeightPx = 900, DiagonalInches = 50 };
+    var layout = new LayoutProfile();
+    var moving = new VirtualMonitorZone();
+    var neighbor = new VirtualMonitorZone();
+    DisplayGeometry.SetZonePixelBounds(display, neighbor, new PixelRect(700, 700, 400, 150));
+    layout.Zones.Add(moving);
+    layout.Zones.Add(neighbor);
+    var proposed = new PixelRect(389, 130, 300, 200);
+    if (ZoneMagnetism.SnapMoved(display, layout, moving.Id, proposed) != proposed)
+        throw new Exception("snapped to a zone on a different row");
+});
+
+Run("magnetic resize meets neighbor without moving the opposite edge", () =>
+{
+    var display = new DisplayProfile { WidthPx = 1600, HeightPx = 900, DiagonalInches = 50 };
+    var layout = new LayoutProfile();
+    var moving = new VirtualMonitorZone();
+    var neighbor = new VirtualMonitorZone();
+    DisplayGeometry.SetZonePixelBounds(display, neighbor, new PixelRect(700, 200, 400, 300));
+    layout.Zones.Add(moving);
+    layout.Zones.Add(neighbor);
+    var rect = ZoneMagnetism.SnapResized(display, layout, moving.Id,
+        new PixelRect(250, 200, 438, 300), 1, 0);
+    Near(rect.Left, 250, 0, "fixed opposite edge");
+    Near(rect.Right, 700, 0, "snapped dragged edge");
+    Near(rect.Height, 300, 0, "unchanged height");
+});
+
+Run("magnetic resize honors minimum size and display edge limits", () =>
+{
+    var display = new DisplayProfile { WidthPx = 800, HeightPx = 600, DiagonalInches = 30 };
+    var layout = new LayoutProfile();
+    var moving = new VirtualMonitorZone();
+    var neighbor = new VirtualMonitorZone();
+    DisplayGeometry.SetZonePixelBounds(display, neighbor, new PixelRect(294, 100, 100, 200));
+    layout.Zones.Add(moving);
+    layout.Zones.Add(neighbor);
+
+    var rect = ZoneMagnetism.SnapResized(display, layout, moving.Id,
+        new PixelRect(200, 100, 100, 200), 1, 0);
+    Near(rect.Width, 100, 0, "minimum width retained");
+
+    var screen = ZoneMagnetism.SnapMoved(display, layout, moving.Id,
+        new PixelRect(489, 450, 300, 120));
+    Near(screen.Left, 500, 0, "snapped to display right edge");
+});
+
 if (failures.Count > 0)
 {
     Console.Error.WriteLine($"MUX.Core validation failed ({failures.Count}):");
@@ -247,7 +315,7 @@ if (failures.Count > 0)
     return 1;
 }
 
-Console.WriteLine("MUX.Core validation passed: 21/21 checks.");
+Console.WriteLine("MUX.Core validation passed.");
 return 0;
 
 void Run(string name, Action test)

@@ -18,6 +18,9 @@ public sealed class VirtualMonitorZone
         {
             // Keep familiar preset labels, but avoid showing 1037:583 for custom
             // pixel-precise rectangles. Never round stored dimensions themselves.
+            if (AspectWidth <= 100 && AspectHeight <= 100)
+                return $"{AspectWidth:0.##}:{AspectHeight:0.##}";
+
             var aw = (int)Math.Round(AspectWidth);
             var ah = (int)Math.Round(AspectHeight);
             if (aw > 0 && ah > 0 &&

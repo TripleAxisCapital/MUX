@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using MUX.App.Services;
@@ -17,6 +18,12 @@ public partial class LayoutOverlayWindow : Window
     private Point _dragStart;
     private double _startX;
     private double _startY;
+    private VirtualMonitorZone? _resizingZone;
+    private Border? _resizingBorder;
+    private PixelRect _resizeStartBounds;
+    private Point _resizeStartPointer;
+    private int _resizeHorizontalEdge;
+    private int _resizeVerticalEdge;
 
     public LayoutOverlayWindow(DisplayProfile display, LayoutProfile layout)
     {
@@ -99,10 +106,92 @@ public partial class LayoutOverlayWindow : Window
             }
         };
 
+        AddResizeGrips((Grid)border.Child, zone, border);
         border.MouseLeftButtonDown += Zone_MouseLeftButtonDown;
         border.MouseMove += Zone_MouseMove;
         border.MouseLeftButtonUp += Zone_MouseLeftButtonUp;
         return border;
+    }
+
+    private void AddResizeGrips(Grid grid, VirtualMonitorZone zone, Border border)
+    {
+        var grips = new (int X, int Y, HorizontalAlignment Horizontal, VerticalAlignment Vertical, Cursor Cursor)[]
+        {
+            (-1, -1, HorizontalAlignment.Left, VerticalAlignment.Top, Cursors.SizeNWSE),
+            ( 0, -1, HorizontalAlignment.Center, VerticalAlignment.Top, Cursors.SizeNS),
+            ( 1, -1, HorizontalAlignment.Right, VerticalAlignment.Top, Cursors.SizeNESW),
+            (-1,  0, HorizontalAlignment.Left, VerticalAlignment.Center, Cursors.SizeWE),
+            ( 1,  0, HorizontalAlignment.Right, VerticalAlignment.Center, Cursors.SizeWE),
+            (-1,  1, HorizontalAlignment.Left, VerticalAlignment.Bottom, Cursors.SizeNESW),
+            ( 0,  1, HorizontalAlignment.Center, VerticalAlignment.Bottom, Cursors.SizeNS),
+            ( 1,  1, HorizontalAlignment.Right, VerticalAlignment.Bottom, Cursors.SizeNWSE)
+        };
+        foreach (var grip in grips)
+        {
+            var thumb = new Thumb
+            {
+                Width = grip.X == 0 ? 28 : 17,
+                Height = grip.Y == 0 ? 28 : 17,
+                HorizontalAlignment = grip.Horizontal,
+                VerticalAlignment = grip.Vertical,
+                Background = new SolidColorBrush(Color.FromRgb(120, 120, 128)),
+                BorderBrush = Brushes.White,
+                BorderThickness = new Thickness(1),
+                Cursor = grip.Cursor,
+                ToolTip = "Drag to freely resize"
+            };
+            thumb.DragStarted += (_, _) => BeginResize(zone, border, grip.X, grip.Y);
+            thumb.DragDelta += (_, _) => UpdateResize();
+            thumb.DragCompleted += (_, _) => CompleteResize();
+            Panel.SetZIndex(thumb, 10);
+            grid.Children.Add(thumb);
+        }
+    }
+
+    private void BeginResize(VirtualMonitorZone zone, Border border, int horizontalEdge, int verticalEdge)
+    {
+        _resizingZone = zone;
+        _resizingBorder = border;
+        _resizeStartBounds = DisplayGeometry.ZoneToPixels(_display, zone, includeDisplayOffset: false);
+        _resizeStartPointer = Mouse.GetPosition(ZoneCanvas);
+        _resizeHorizontalEdge = horizontalEdge;
+        _resizeVerticalEdge = verticalEdge;
+    }
+
+    private void UpdateResize()
+    {
+        if (_resizingZone is null || _resizingBorder is null || ActualWidth <= 1 || ActualHeight <= 1)
+            return;
+
+        var pointer = Mouse.GetPosition(ZoneCanvas);
+        var deltaX = (int)Math.Round((pointer.X - _resizeStartPointer.X) * _display.WidthPx / ZoneCanvas.ActualWidth);
+        var deltaY = (int)Math.Round((pointer.Y - _resizeStartPointer.Y) * _display.HeightPx / ZoneCanvas.ActualHeight);
+        var rect = DisplayGeometry.ResizeZoneRectangle(
+            _resizeStartBounds, deltaX, deltaY, _resizeHorizontalEdge, _resizeVerticalEdge,
+            _display.WidthPx, _display.HeightPx);
+        DisplayGeometry.SetZonePixelBounds(_display, _resizingZone, rect);
+
+        _resizingBorder.Width = rect.Width * ZoneCanvas.ActualWidth / _display.WidthPx;
+        _resizingBorder.Height = rect.Height * ZoneCanvas.ActualHeight / _display.HeightPx;
+        Canvas.SetLeft(_resizingBorder, rect.Left * ZoneCanvas.ActualWidth / _display.WidthPx);
+        Canvas.SetTop(_resizingBorder, rect.Top * ZoneCanvas.ActualHeight / _display.HeightPx);
+        if (_resizingBorder.Child is Grid grid && grid.Children.OfType<StackPanel>().FirstOrDefault() is { } stack)
+        {
+            if (stack.Children.OfType<TextBlock>().FirstOrDefault() is { } size)
+                size.Text = $"{_resizingZone.DiagonalInches:0.#}″";
+            if (stack.Children.OfType<TextBlock>().Skip(1).FirstOrDefault() is { } ratio)
+                ratio.Text = $"{_resizingZone.Name} · {_resizingZone.AspectLabel}";
+        }
+    }
+
+    private void CompleteResize()
+    {
+        if (_resizingZone is null)
+            return;
+
+        _resizingZone = null;
+        _resizingBorder = null;
+        RenderZones();
     }
 
     private void Zone_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -111,6 +200,10 @@ public partial class LayoutOverlayWindow : Window
         {
             return;
         }
+
+        if (_resizingZone is not null || e.OriginalSource is Thumb ||
+            e.OriginalSource is FrameworkElement { TemplatedParent: Thumb })
+            return;
 
         _dragElement = border;
         _dragZone = zone;

@@ -25,6 +25,8 @@ public sealed class ZoneOutlineService : IDisposable
     private const uint SwpNoActivate = 0x0010;
     private const uint SwpShowWindow = 0x0040;
     private const int HoverBandPx = 10;
+    private const int VkShift = 0x10;
+    private const int VkLeftMouse = 0x01;
     private const int ToolbarGapPx = 8;
     private static readonly IntPtr HwndTopmost = new(-1);
     private static readonly string[] AspectPresets = ["16:9", "16:10", "21:9", "32:9", "4:3", "3:2"];
@@ -37,6 +39,13 @@ public sealed class ZoneOutlineService : IDisposable
     private DisplayProfile? _display;
     private LayoutProfile? _layout;
     private bool _enabled;
+    private bool _showOutlines;
+    private bool _shiftEditMode;
+    private VirtualMonitorZone? _resizingZone;
+    private PixelRect _resizeStartBounds;
+    private NativePoint _resizeStartCursor;
+    private int _resizeHorizontalEdge;
+    private int _resizeVerticalEdge;
     private double _defaultThickness = 2.0;
     private Window? _toolbarWindow;
     private Border? _toolbarShell;
@@ -64,50 +73,58 @@ public sealed class ZoneOutlineService : IDisposable
         _hoverTimer.Tick += HoverTimer_Tick;
     }
 
-    public void Configure(DisplayProfile? display, LayoutProfile? layout, bool enabled, double thickness)
+    public void Configure(DisplayProfile? display, LayoutProfile? layout, bool enabled, bool showOutlines, double thickness)
     {
         _display = display;
         _layout = layout;
         _enabled = enabled;
+        _showOutlines = showOutlines;
         _defaultThickness = Math.Clamp(thickness, 1.0, 6.0);
 
         if (!enabled || display is null || layout is null || layout.Zones.Count == 0)
         {
+            _shiftEditMode = false;
             ClearOutlines();
             HideToolbar();
             _hoverTimer.Stop();
             return;
         }
 
+        // Keep the lightweight key poll alive even with persistent outlines turned off.
+        // No mouse hook, global keyboard hook or focus change is required.
         if (!_hoverTimer.IsEnabled)
-        {
             _hoverTimer.Start();
-        }
 
-        var activeIds = layout.Zones.Select(zone => zone.Id).ToHashSet();
-        foreach (var staleId in _outlines.Keys.Where(id => !activeIds.Contains(id)).ToList())
+        SyncOutlines();
+    }
+
+    private void SyncOutlines()
+    {
+        if (_display is null || _layout is null || (!_showOutlines && !_shiftEditMode))
         {
-            Remove(staleId);
+            ClearOutlines();
+            return;
         }
 
-        foreach (var zone in layout.Zones)
+        var activeIds = _layout.Zones.Select(zone => zone.Id).ToHashSet();
+        foreach (var staleId in _outlines.Keys.Where(id => !activeIds.Contains(id)).ToList())
+            Remove(staleId);
+
+        foreach (var zone in _layout.Zones)
         {
             if (!_outlines.TryGetValue(zone.Id, out var visual))
             {
-                visual = CreateOutline();
+                visual = CreateOutline(zone.Id);
                 _outlines[zone.Id] = visual;
             }
-
             UpdateOutline(zone, visual);
         }
 
         if (_toolbarZone is not null)
         {
-            var current = layout.Zones.FirstOrDefault(zone => zone.Id == _toolbarZone.Id);
+            var current = _layout.Zones.FirstOrDefault(zone => zone.Id == _toolbarZone.Id);
             if (current is null)
-            {
                 HideToolbar();
-            }
             else
             {
                 _toolbarZone = current;
@@ -119,19 +136,32 @@ public sealed class ZoneOutlineService : IDisposable
 
     private void HoverTimer_Tick(object? sender, EventArgs e)
     {
-        if (!_enabled || _display is null || _layout is null || _layout.Zones.Count == 0 || !GetCursorPos(out var cursor))
-        {
-            HideToolbar();
+        if (!_enabled || _display is null || _layout is null || !GetCursorPos(out var cursor))
             return;
+
+        var shiftDown = (GetAsyncKeyState(VkShift) & 0x8000) != 0;
+        // Do not steal a drag that was already in progress when Shift was pressed.
+        if (!_shiftEditMode && (GetAsyncKeyState(VkLeftMouse) & 0x8000) != 0)
+            shiftDown = false;
+
+        // A resize/move that started in edit mode always finishes even if Shift is released.
+        if (_resizingZone is not null || _draggingZone)
+            shiftDown = true;
+
+        if (shiftDown != _shiftEditMode)
+        {
+            _shiftEditMode = shiftDown;
+            SyncOutlines();
         }
 
-        if (_draggingZone || IsToolbarInteracting() || CursorInsideToolbar(cursor))
+        if (_draggingZone || _resizingZone is not null || IsToolbarInteracting() || CursorInsideToolbar(cursor))
         {
             _lastHoverUtc = DateTime.UtcNow;
             return;
         }
 
-        var hovered = FindTopEdgeZone(cursor);
+        // Shift overlays use explicit menu buttons rather than accidental edge hover.
+        var hovered = _showOutlines && !_shiftEditMode ? FindTopEdgeZone(cursor) : null;
         if (hovered is not null)
         {
             _lastHoverUtc = DateTime.UtcNow;
@@ -139,10 +169,9 @@ public sealed class ZoneOutlineService : IDisposable
             return;
         }
 
-        if (_toolbarWindow?.IsVisible == true && DateTime.UtcNow - _lastHoverUtc > TimeSpan.FromMilliseconds(480))
-        {
+        if (_toolbarWindow?.IsVisible == true &&
+            DateTime.UtcNow - _lastHoverUtc > TimeSpan.FromMilliseconds(650))
             HideToolbar();
-        }
     }
 
     private VirtualMonitorZone? FindTopEdgeZone(NativePoint cursor)
@@ -661,7 +690,7 @@ public sealed class ZoneOutlineService : IDisposable
 
         FindOpenPosition(clone);
         _layout.Zones.Add(clone);
-        Configure(_display, _layout, true, _defaultThickness);
+        SyncOutlines();
         RaiseLayoutEdited();
     }
 
@@ -726,12 +755,24 @@ public sealed class ZoneOutlineService : IDisposable
 
     private void UpdateOutline(VirtualMonitorZone zone, OutlineVisual visual)
     {
-        visual.Border.BorderThickness = new Thickness(EffectiveThickness(zone));
-        visual.Border.BorderBrush = BrushFromHex(zone.OutlineColor, Colors.Black);
+        visual.Border.BorderThickness = new Thickness(_shiftEditMode ? 1.5 : EffectiveThickness(zone));
+        visual.Border.BorderBrush = _shiftEditMode
+            ? new SolidColorBrush(Color.FromArgb(225, 245, 245, 249))
+            : BrushFromHex(zone.OutlineColor, Colors.Black);
+        visual.Border.Background = _shiftEditMode
+            ? new SolidColorBrush(Color.FromArgb(88, 240, 240, 245))
+            : Brushes.Transparent;
+        visual.Label.Text = $"{zone.DiagonalInches:0.#}″  ·  {zone.AspectWidth / zone.AspectHeight:0.##}:1";
+        visual.Label.Visibility = _shiftEditMode ? Visibility.Visible : Visibility.Collapsed;
+        visual.Menu.Visibility = _shiftEditMode ? Visibility.Visible : Visibility.Collapsed;
+        foreach (var grip in visual.Grips)
+            grip.Visibility = _shiftEditMode ? Visibility.Visible : Visibility.Collapsed;
+
+        visual.Window.IsHitTestVisible = _shiftEditMode;
+        visual.Border.IsHitTestVisible = _shiftEditMode;
+        SetClickThrough(visual.Window, !_shiftEditMode);
         if (_display is not null)
-        {
             Position(visual.Window, DisplayGeometry.ZoneToPixels(_display, zone));
-        }
     }
 
     private double EffectiveThickness(VirtualMonitorZone zone)
@@ -833,17 +874,83 @@ public sealed class ZoneOutlineService : IDisposable
         }
     }
 
-    private static OutlineVisual CreateOutline()
+    private OutlineVisual CreateOutline(Guid zoneId)
     {
+        var content = new Grid { IsHitTestVisible = true };
+        var label = new TextBlock
+        {
+            Visibility = Visibility.Collapsed,
+            Text = "",
+            Margin = new Thickness(12, 9, 0, 0),
+            FontSize = 12,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = new SolidColorBrush(Color.FromRgb(255, 255, 255)),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top,
+            IsHitTestVisible = false
+        };
+        content.Children.Add(label);
+
+        var menu = CreateToolbarButton("•••", "Open this quadrant's controls", 36);
+        menu.Height = 28;
+        menu.Margin = new Thickness(0, 7, 8, 0);
+        menu.HorizontalAlignment = HorizontalAlignment.Right;
+        menu.VerticalAlignment = VerticalAlignment.Top;
+        menu.Visibility = Visibility.Collapsed;
+        menu.Click += (_, _) =>
+        {
+            var zone = _layout?.Zones.FirstOrDefault(candidate => candidate.Id == zoneId);
+            if (zone is null) return;
+            _lastHoverUtc = DateTime.UtcNow;
+            ShowToolbar(zone);
+        };
+        Panel.SetZIndex(menu, 20);
+        content.Children.Add(menu);
+
+        var grips = new List<Thumb>();
+        var positions = new (int X, int Y, HorizontalAlignment Horizontal, VerticalAlignment Vertical, Cursor Cursor)[]
+        {
+            (-1, -1, HorizontalAlignment.Left, VerticalAlignment.Top, Cursors.SizeNWSE),
+            ( 0, -1, HorizontalAlignment.Center, VerticalAlignment.Top, Cursors.SizeNS),
+            ( 1, -1, HorizontalAlignment.Right, VerticalAlignment.Top, Cursors.SizeNESW),
+            (-1,  0, HorizontalAlignment.Left, VerticalAlignment.Center, Cursors.SizeWE),
+            ( 1,  0, HorizontalAlignment.Right, VerticalAlignment.Center, Cursors.SizeWE),
+            (-1,  1, HorizontalAlignment.Left, VerticalAlignment.Bottom, Cursors.SizeNESW),
+            ( 0,  1, HorizontalAlignment.Center, VerticalAlignment.Bottom, Cursors.SizeNS),
+            ( 1,  1, HorizontalAlignment.Right, VerticalAlignment.Bottom, Cursors.SizeNWSE)
+        };
+        foreach (var grip in positions)
+        {
+            var thumb = new Thumb
+            {
+                Width = grip.X == 0 ? 27 : 15,
+                Height = grip.Y == 0 ? 27 : 15,
+                HorizontalAlignment = grip.Horizontal,
+                VerticalAlignment = grip.Vertical,
+                Cursor = grip.Cursor,
+                Background = new SolidColorBrush(Color.FromArgb(235, 250, 250, 252)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(95, 95, 103)),
+                BorderThickness = new Thickness(1),
+                Visibility = Visibility.Collapsed,
+                ToolTip = "Drag edge or corner to resize"
+            };
+            thumb.DragStarted += (_, _) => BeginZoneResize(zoneId, grip.X, grip.Y);
+            thumb.DragDelta += (_, _) => UpdateZoneResize();
+            thumb.DragCompleted += (_, _) => FinishZoneResize();
+            Panel.SetZIndex(thumb, 10);
+            content.Children.Add(thumb);
+            grips.Add(thumb);
+        }
+
         var border = new Border
         {
             Background = Brushes.Transparent,
             BorderBrush = Brushes.Black,
             BorderThickness = new Thickness(2),
             SnapsToDevicePixels = true,
-            IsHitTestVisible = false
+            IsHitTestVisible = false,
+            Child = content
         };
-
         var window = new Window
         {
             WindowStyle = WindowStyle.None,
@@ -857,23 +964,62 @@ public sealed class ZoneOutlineService : IDisposable
             IsHitTestVisible = false,
             Content = border
         };
-
-        window.SourceInitialized += (_, _) => MakeClickThrough(window);
+        window.SourceInitialized += (_, _) => SetClickThrough(window, true);
         window.Show();
-        return new OutlineVisual(window, border);
+        return new OutlineVisual(window, border, label, menu, grips);
     }
 
-    private static void MakeClickThrough(Window window)
+    private void BeginZoneResize(Guid zoneId, int horizontal, int vertical)
+    {
+        if (_display is null || _layout is null || !GetCursorPos(out _resizeStartCursor))
+            return;
+        var zone = _layout.Zones.FirstOrDefault(candidate => candidate.Id == zoneId);
+        if (zone is null) return;
+
+        _resizingZone = zone;
+        _resizeStartBounds = DisplayGeometry.ZoneToPixels(_display, zone, includeDisplayOffset: false);
+        _resizeHorizontalEdge = horizontal;
+        _resizeVerticalEdge = vertical;
+    }
+
+    private void UpdateZoneResize()
+    {
+        if (_resizingZone is null || _display is null || !GetCursorPos(out var cursor))
+            return;
+
+        var rect = DisplayGeometry.ResizeZoneRectangle(
+            _resizeStartBounds, cursor.X - _resizeStartCursor.X, cursor.Y - _resizeStartCursor.Y,
+            _resizeHorizontalEdge, _resizeVerticalEdge, _display.WidthPx, _display.HeightPx);
+        DisplayGeometry.SetZonePixelBounds(_display, _resizingZone, rect);
+        if (_outlines.TryGetValue(_resizingZone.Id, out var visual))
+            UpdateOutline(_resizingZone, visual);
+        if (_toolbarZone?.Id == _resizingZone.Id)
+        {
+            SyncToolbar(_resizingZone);
+            PositionToolbar(_resizingZone);
+        }
+    }
+
+    private void FinishZoneResize()
+    {
+        if (_resizingZone is null)
+            return;
+
+        _resizingZone = null;
+        _lastHoverUtc = DateTime.UtcNow;
+        RaiseLayoutEdited();
+    }
+
+    private static void SetClickThrough(Window window, bool clickThrough)
     {
         var hwnd = new WindowInteropHelper(window).Handle;
-        if (hwnd == IntPtr.Zero)
-        {
-            return;
-        }
+        if (hwnd == IntPtr.Zero) return;
 
         var current = GetWindowLongPtr(hwnd, GwlExStyle).ToInt64();
-        var desired = current | WsExTransparent | WsExToolWindow | WsExNoActivate;
-        SetWindowLongPtr(hwnd, GwlExStyle, new IntPtr(desired));
+        var desired = current | WsExToolWindow | WsExNoActivate;
+        desired = clickThrough ? desired | WsExTransparent : desired & ~WsExTransparent;
+        if (current != desired)
+            SetWindowLongPtr(hwnd, GwlExStyle, new IntPtr(desired));
     }
 
     private static void MakeToolbarWindow(Window window)
@@ -950,7 +1096,8 @@ public sealed class ZoneOutlineService : IDisposable
         ClearOutlines();
     }
 
-    private sealed record OutlineVisual(Window Window, Border Border);
+    private sealed record OutlineVisual(
+        Window Window, Border Border, TextBlock Label, Button Menu, List<Thumb> Grips);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct NativePoint
@@ -967,6 +1114,9 @@ public sealed class ZoneOutlineService : IDisposable
         public int Right;
         public int Bottom;
     }
+
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int virtualKey);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
